@@ -1,0 +1,84 @@
+name: India Market Analysis — Daily Runner
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SCHEDULE:  5:00 PM GST (Gulf Standard Time = UTC+4)
+#            → 13:00 UTC weekdays
+#
+# FORMAT:    minute hour day month weekday
+# ──────────────────────────────────────────────────────────────────────────────
+on:
+  schedule:
+    - cron: "0 13 * * 1-5"     # Mon–Fri, 1 PM UTC = 5 PM GST
+
+  workflow_dispatch:             # Allow manual trigger from GitHub UI
+    inputs:
+      reason:
+        description: "Manual run reason (optional)"
+        required: false
+        default: "Manual trigger"
+
+jobs:
+  run-market-analysis:
+    name: Run India Market Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 45          # Kill if hangs (full run ~25 min for 500 stocks)
+
+    steps:
+      # ── 1. Check out repository ───────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ──────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"           # Cache pip packages between runs (faster)
+
+      # ── 3. Install dependencies ───────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── 4. Write Google Service Account credentials from GitHub Secret ────
+      #
+      # The secret GOOGLE_CREDENTIALS contains the full JSON content of your
+      # service account key file. We write it to a temporary file that the
+      # Python script reads at runtime.
+      #
+      - name: Create Google credentials file
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          echo "$GOOGLE_CREDENTIALS" > /tmp/google_credentials.json
+          echo "✅ Credentials file written to /tmp/google_credentials.json"
+
+      # ── 5. Run the market analysis script ─────────────────────────────────
+      - name: Run market analysis
+        env:
+          # Path to credentials file — the Python script reads this env var
+          GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
+          # Google Sheet URL — the Python script reads this env var
+          GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
+          # Optional: control which market to analyse
+          MARKET: "INDIA"
+        run: |
+          echo "Starting market analysis at $(date -u '+%Y-%m-%d %H:%M UTC')"
+          python market_analyzer_gsheets.py
+          echo "Analysis complete at $(date -u '+%Y-%m-%d %H:%M UTC')"
+
+      # ── 6. Clean up credentials file ──────────────────────────────────────
+      - name: Remove credentials file
+        if: always()             # Run even if previous steps failed
+        run: |
+          rm -f /tmp/google_credentials.json
+          echo "✅ Credentials file removed"
+
+      # ── 7. Send failure notification (optional — configure your email) ────
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Market analysis FAILED. Check logs above."
+          echo "Run triggered by: ${{ github.event_name }}"
+          echo "Repository: ${{ github.repository }}"
