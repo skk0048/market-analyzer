@@ -110,7 +110,7 @@ INDIA_SECTORS = {
     "FMCG":          {"yahoo": "^CNXFMCG",    "csv": "ind_niftyfmcglist.csv"},
     "Metal":         {"yahoo": "^CNXMETAL",   "csv": "ind_niftymetallist.csv"},
     "Oil & Gas":     {"yahoo": "^CNXENERGY",  "csv": "ind_niftyoilgaslist.csv"},
-    "Finance":       {"yahoo": "^CNXFINANCE", "csv": "ind_niftyfinancelist.csv"},
+    "Finance":       {"yahoo": "^CNXFIN", "csv": "ind_niftyfinancelist.csv"},
     "Realty":        {"yahoo": "^CNXREALTY",  "csv": None},
     "Infra":         {"yahoo": "^CNXINFRA",   "csv": None},
     "Media":         {"yahoo": "^CNXMEDIA",   "csv": "ind_niftymedialist.csv"},
@@ -152,7 +152,7 @@ NSE_BREADTH_INDICES = {
     "Nifty 500":      {"yahoo": None,          "csv": "ind_nifty500list.csv"},
     "Nifty Bank":     {"yahoo": "^NSEBANK",    "csv": "ind_niftybanklist.csv"},
     "Nifty IT":       {"yahoo": "^CNXIT",      "csv": "ind_niftyitlist.csv"},
-    "Nifty Midcap":   {"yahoo": "^NSEMDCP100", "csv": "ind_niftymidcap100list.csv"},
+    "Nifty Midcap":   {"yahoo": "^CNXMDCP100", "csv": "ind_niftymidcap100list.csv"},
     "Nifty Smallcap": {"yahoo": "^CNXSC",      "csv": "ind_niftysmallcap100list.csv"},
     "Nifty Total Mkt":{"yahoo": None,          "csv": "ind_niftytotalmarket_list.csv"},
 }
@@ -414,7 +414,11 @@ def _strip_tz(idx):
 
 
 def normalize_series(s):
+    """Ensure s is always a plain 1-D pd.Series with timezone-naive date index."""
     try:
+        # If a single-column DataFrame slipped through, squeeze it to a Series
+        if isinstance(s, pd.DataFrame):
+            s = s.squeeze()
         idx = _strip_tz(s.index)
         idx = idx.normalize()
         s2  = pd.Series(s.values, index=idx)
@@ -522,7 +526,9 @@ def fetch_prices(symbols, days=PERIOD_DAYS):
                         low_d.columns = [batch[0]]
             for sym in batch:
                 if sym in close.columns:
-                    s = normalize_series(close[sym].dropna())
+                    col = close[sym]
+                    if isinstance(col, pd.DataFrame): col = col.squeeze()
+                    s = normalize_series(col.dropna())
                     if len(s) >= 22:
                         all_data[sym] = s
                     else:
@@ -553,7 +559,9 @@ def fetch_prices(symbols, days=PERIOD_DAYS):
                     low_d.columns = [batch[0]]
             for sym in batch:
                 if sym in low_d.columns:
-                    l = normalize_series(low_d[sym].dropna())
+                    low_col = low_d[sym]
+                    if isinstance(low_col, pd.DataFrame): low_col = low_col.squeeze()
+                    l = normalize_series(low_col.dropna())
                     if len(l) >= 5:
                         low_data_dict[sym] = l
         except Exception:
@@ -578,7 +586,10 @@ def fetch_sector_indices():
                 raw = yf.download(yahoo_sym, period=f"{PERIOD_DAYS}d",
                                   auto_adjust=True, progress=False)
                 if len(raw) >= 22:
-                    result[sname] = normalize_series(raw["Close"].dropna())
+                    close_col = raw["Close"]
+                    if isinstance(close_col, pd.DataFrame):
+                        close_col = close_col.squeeze()
+                    result[sname] = normalize_series(close_col.dropna())
                     continue
             except Exception:
                 pass
@@ -946,7 +957,9 @@ def fetch_ohlcv_batch(symbols, days=PERIOD_DAYS):
                     frames = {}
                     for pc in ["Open", "High", "Low", "Close", "Volume"]:
                         if pc in raw.columns.get_level_values(0) and sym in raw[pc].columns:
-                            frames[pc] = normalize_series(raw[pc][sym].dropna())
+                            col_data = raw[pc][sym]
+                            if isinstance(col_data, pd.DataFrame): col_data = col_data.squeeze()
+                            frames[pc] = normalize_series(col_data.dropna())
                     if "Close" in frames and len(frames["Close"]) >= 60:
                         df_sym = pd.DataFrame(frames)
                         df_sym.dropna(subset=["Close", "High", "Low"], inplace=True)
@@ -1161,16 +1174,24 @@ def analyse_sector_performance(sector_prices, index_prices):
     for sec, prices in sector_prices.items():
         if len(prices) < 22: continue
         row = {"Sector": sec}
+        # Ensure prices is always a plain 1-D Series (not a DataFrame column)
+        if isinstance(prices, pd.DataFrame):
+            prices = prices.squeeze()
+
         for label, days in [("1M(22d)%",22),("3M(66d)%",66),("6M(132d)%",132),("12M(252d)%",252)]:
             if len(prices) >= days+1:
-                cur, past = float(prices.iloc[-1]), float(prices.iloc[-(days+1)])
-                row[label] = round((cur/past-1)*100,2) if past != 0 else np.nan
+                cur_v  = float(prices.iloc[-1])
+                past_v = float(prices.iloc[-(days+1)])
+                row[label] = round((cur_v/past_v-1)*100,2) if past_v != 0 else np.nan
             else:
                 row[label] = np.nan
         try:
             jan1 = pd.Timestamp(f"{datetime.now().year}-01-01")
-            past = prices[prices.index <= jan1]
-            row["YTD%"] = round((float(prices.iloc[-1])/float(past.iloc[-1])-1)*100,2) if len(past)>0 else np.nan
+            past_ytd = prices[prices.index <= jan1]
+            if len(past_ytd) > 0:
+                row["YTD%"] = round((float(prices.iloc[-1])/float(past_ytd.iloc[-1])-1)*100,2)
+            else:
+                row["YTD%"] = np.nan
         except Exception:
             row["YTD%"] = np.nan
         for label, days in [("RS_1M%",22),("RS_3M%",55),("RS_6M%",120),("RS_12M%",252)]:
@@ -1620,7 +1641,10 @@ def main():
         idx_raw = yf.download(index_sym, period=f"{PERIOD_DAYS}d", auto_adjust=True, progress=False)
         if idx_raw.empty:
             print("  ❌ Cannot fetch index"); return
-        index_prices  = normalize_series(idx_raw["Close"].dropna())
+        idx_close = idx_raw["Close"]
+        if isinstance(idx_close, pd.DataFrame):
+            idx_close = idx_close.squeeze()
+        index_prices  = normalize_series(idx_close.dropna())
         sector_prices = fetch_sector_indices()
         price_data, low_data = fetch_prices(stock_syms)
 
@@ -1738,3 +1762,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
