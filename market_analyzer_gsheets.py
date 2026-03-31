@@ -254,8 +254,20 @@ def clear_and_write_df(ws, df, include_index=False):
 
     # Replace NaN with empty string (Google Sheets doesn't understand NaN)
     df_clean = df.copy()
+    
+    # Replace problematic values
     df_clean = df_clean.replace([float("inf"), float("-inf")], "")
     df_clean = df_clean.fillna("")
+    
+    # 🔥 CRITICAL FIX: Convert all numpy types → native Python
+    df_clean = df_clean.astype(object)
+    
+    # Ensure all values are JSON serializable
+    df_clean = df_clean.applymap(lambda x: 
+        float(x) if isinstance(x, (np.floating,)) else
+        int(x) if isinstance(x, (np.integer,)) else
+        x
+    )
 
     _api_call(ws.clear)
     time.sleep(0.5)   # small pause to avoid hitting quota
