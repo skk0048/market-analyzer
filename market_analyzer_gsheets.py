@@ -152,7 +152,7 @@ NSE_BREADTH_INDICES = {
     "Nifty 500":      {"yahoo": None,          "csv": "ind_nifty500list.csv"},
     "Nifty Bank":     {"yahoo": "^NSEBANK",    "csv": "ind_niftybanklist.csv"},
     "Nifty IT":       {"yahoo": "^CNXIT",      "csv": "ind_niftyitlist.csv"},
-    "Nifty Midcap":   {"yahoo": "^CNXMDCP100", "csv": "ind_niftymidcap100list.csv"},
+    "Nifty Midcap":   {"yahoo": None, "csv": "ind_niftymidcap100list.csv"},
     "Nifty Smallcap": {"yahoo": "^CNXSC",      "csv": "ind_niftysmallcap100list.csv"},
     "Nifty Total Mkt":{"yahoo": None,          "csv": "ind_niftytotalmarket_list.csv"},
 }
@@ -263,11 +263,12 @@ def clear_and_write_df(ws, df, include_index=False):
     df_clean = df_clean.astype(object)
     
     # Ensure all values are JSON serializable
-    df_clean = df_clean.applymap(lambda x: 
-        float(x) if isinstance(x, (np.floating,)) else
-        int(x) if isinstance(x, (np.integer,)) else
-        x
-    )
+    # Convert numpy types safely
+    df_clean = df_clean.apply(lambda col: col.map(
+        lambda x: float(x) if isinstance(x, (np.floating,)) else
+                  int(x) if isinstance(x, (np.integer,)) else
+                  x
+    ))
 
     _api_call(ws.clear)
     time.sleep(0.5)   # small pause to avoid hitting quota
