@@ -1,0 +1,2 @@
+# market-analyzer
+sector rotation
