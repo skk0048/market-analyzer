@@ -1,84 +1,122 @@
-name: India Market Analysis — Daily Runner
+name: Market Analysis — India + USA Daily Runner
 
 # ──────────────────────────────────────────────────────────────────────────────
-# SCHEDULE:  5:00 PM GST (Gulf Standard Time = UTC+4)
-#            → 13:00 UTC weekdays
-#
-# FORMAT:    minute hour day month weekday
+# SCHEDULE: 5:00 PM GST = 1:00 PM UTC weekdays (India post-close)
+# For US data AFTER close: change cron to "0 17 * * 1-5" (9:00 PM GST)
 # ──────────────────────────────────────────────────────────────────────────────
 on:
   schedule:
-    - cron: "0 13 * * 1-5"     # Mon–Fri, 1 PM UTC = 5 PM GST
+    - cron: "0 13 * * 1-5"
 
-  workflow_dispatch:             # Allow manual trigger from GitHub UI
+  workflow_dispatch:
     inputs:
-      reason:
-        description: "Manual run reason (optional)"
+      market:
+        description: "Which market to run"
         required: false
-        default: "Manual trigger"
+        default: "both"
+        type: choice
+        options: ["both", "india", "usa"]
 
+# ── INDIA ─────────────────────────────────────────────────────────────────────
 jobs:
-  run-market-analysis:
-    name: Run India Market Analysis
+  run-india:
+    name: India Market Analysis
     runs-on: ubuntu-latest
-    timeout-minutes: 45          # Kill if hangs (full run ~25 min for 500 stocks)
+    timeout-minutes: 45
+    if: |
+      github.event_name == 'schedule' ||
+      github.event.inputs.market == 'india' ||
+      github.event.inputs.market == 'both'
 
     steps:
-      # ── 1. Check out repository ───────────────────────────────────────────
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # ── 2. Set up Python ──────────────────────────────────────────────────
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"           # Cache pip packages between runs (faster)
+          cache: "pip"
 
-      # ── 3. Install dependencies ───────────────────────────────────────────
       - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
-      # ── 4. Write Google Service Account credentials from GitHub Secret ────
-      #
-      # The secret GOOGLE_CREDENTIALS contains the full JSON content of your
-      # service account key file. We write it to a temporary file that the
-      # Python script reads at runtime.
-      #
-      - name: Create Google credentials file
+      - name: Restore India price cache
+        uses: actions/cache@v4
+        with:
+          path: ~/StockPriceCache
+          key: india-cache-${{ runner.os }}-${{ hashFiles('market_analyzer_gsheets.py') }}
+          restore-keys: india-cache-${{ runner.os }}-
+
+      - name: Write credentials
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-        run: |
-          echo "$GOOGLE_CREDENTIALS" > /tmp/google_credentials.json
-          echo "✅ Credentials file written to /tmp/google_credentials.json"
+        run: echo "$GOOGLE_CREDENTIALS" > /tmp/google_credentials.json
 
-      # ── 5. Run the market analysis script ─────────────────────────────────
-      - name: Run market analysis
+      - name: Run India analysis
         env:
-          # Path to credentials file — the Python script reads this env var
           GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
-          # Google Sheet URL — the Python script reads this env var
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
-          # Optional: control which market to analyse
-          MARKET: "INDIA"
-        run: |
-          echo "Starting market analysis at $(date -u '+%Y-%m-%d %H:%M UTC')"
-          python market_analyzer_gsheets.py
-          echo "Analysis complete at $(date -u '+%Y-%m-%d %H:%M UTC')"
+          MARKET: INDIA
+        run: python market_analyzer_gsheets.py
 
-      # ── 6. Clean up credentials file ──────────────────────────────────────
-      - name: Remove credentials file
-        if: always()             # Run even if previous steps failed
-        run: |
-          rm -f /tmp/google_credentials.json
-          echo "✅ Credentials file removed"
+      - name: Save India price cache
+        uses: actions/cache@v4
+        if: always()
+        with:
+          path: ~/StockPriceCache
+          key: india-cache-${{ runner.os }}-${{ hashFiles('market_analyzer_gsheets.py') }}
 
-      # ── 7. Send failure notification (optional — configure your email) ────
-      - name: Notify on failure
-        if: failure()
-        run: |
-          echo "::error::Market analysis FAILED. Check logs above."
-          echo "Run triggered by: ${{ github.event_name }}"
-          echo "Repository: ${{ github.repository }}"
+      - name: Remove credentials
+        if: always()
+        run: rm -f /tmp/google_credentials.json
+
+# ── USA ───────────────────────────────────────────────────────────────────────
+  run-usa:
+    name: USA Market Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: |
+      github.event_name == 'schedule' ||
+      github.event.inputs.market == 'usa' ||
+      github.event.inputs.market == 'both'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore USA price cache
+        uses: actions/cache@v4
+        with:
+          path: ~/StockPriceCache
+          key: usa-cache-${{ runner.os }}-${{ hashFiles('usa_market_analyzer_gsheets.py') }}
+          restore-keys: usa-cache-${{ runner.os }}-
+
+      - name: Write credentials
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: echo "$GOOGLE_CREDENTIALS" > /tmp/google_credentials.json
+
+      - name: Run USA analysis
+        env:
+          GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
+          GOOGLE_SHEET_URL_USA: ${{ secrets.GOOGLE_SHEET_URL_USA }}
+          GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
+          MARKET: US
+        run: python usa_market_analyzer_gsheets.py
+
+      - name: Save USA price cache
+        uses: actions/cache@v4
+        if: always()
+        with:
+          path: ~/StockPriceCache
+          key: usa-cache-${{ runner.os }}-${{ hashFiles('usa_market_analyzer_gsheets.py') }}
+
+      - name: Remove credentials
+        if: always()
+        run: rm -f /tmp/google_credentials.json
