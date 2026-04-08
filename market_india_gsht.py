@@ -170,6 +170,7 @@ def write_tab(ss, title, df, hdr_bg="navy", skip_cols=None):
     Clear and write a DataFrame to a named tab.
     Applies header formatting + value coloring.
     """
+    time.sleep(2)
     if df is None or (hasattr(df, "empty") and df.empty):
         ws = _get_ws(ss, title); _api(ws.clear)
         _api(ws.update, "A1", [["No data available."]]); return
@@ -181,7 +182,7 @@ def write_tab(ss, title, df, hdr_bg="navy", skip_cols=None):
     df_out = df[display_cols].copy().replace([float("inf"), float("-inf")], "").fillna("")
 
     nr, nc = len(df_out) + 1, len(df_out.columns)
-    ws = _get_ws(ss, title, rows=max(nr + 50, 500), cols=max(nc + 5, 30))
+    ws = _api(_get_ws, ss, title, rows=max(nr + 50, 500), cols=max(nc + 5, 30))
 
     _api(ws.clear)
     time.sleep(0.5)
@@ -237,7 +238,7 @@ def write_tab(ss, title, df, hdr_bg="navy", skip_cols=None):
 def write_dashboard_tab(ss, dash_df, market):
     """Write the Dashboard tab with special two-column layout."""
     title  = "📋 Dashboard"
-    ws     = _get_ws(ss, title, rows=200, cols=2)
+    ws = _api(_get_ws, ss, title, rows=200, cols=2)
     _api(ws.clear); time.sleep(0.4)
 
     if dash_df is None or dash_df.empty:
