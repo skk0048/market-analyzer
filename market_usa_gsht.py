@@ -113,6 +113,7 @@ def _cell_bg(val, col_name):
     return None
 
 def write_tab(ss, title, df, hdr_bg="navy"):
+    time.sleep(2)
     if df is None or (hasattr(df,"empty") and df.empty):
         ws=_get_ws(ss,title); _api(ws.clear); _api(ws.update,"A1",[["No data."]]); return
     display_cols=[c for c in df.columns if not c.startswith("_")]
