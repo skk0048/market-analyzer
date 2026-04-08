@@ -1,19 +1,11 @@
-# ── Core data science ─────────────────────────────────────────────────────────
+# FundaTechno Market Analysis System v5.2
+yfinance>=0.2.36
 pandas>=2.0.0
 numpy>=1.24.0
-scipy>=1.10.0
-
-# ── Market data ───────────────────────────────────────────────────────────────
-yfinance>=0.2.28
-
-# ── Google Sheets output ──────────────────────────────────────────────────────
-gspread>=5.12.0
-gspread-dataframe>=3.3.0
-google-auth>=2.23.0
-google-auth-oauthlib>=1.1.0
-
-# ── HTTP / network ────────────────────────────────────────────────────────────
-requests>=2.31.0
-
-# ── Rate limiting / retry (for Google Sheets API) ────────────────────────────
+scipy>=1.11.0
+openpyxl>=3.1.0
+gspread>=6.0.0
+gspread-dataframe>=4.0.0
+google-auth>=2.22.0
 tenacity>=8.2.0
+requests>=2.31.0
