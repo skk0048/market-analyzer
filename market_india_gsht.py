@@ -106,8 +106,8 @@ def _get_ws(ss, title, rows=3000, cols=60):
 
 
 @tenacity.retry(
-    wait=tenacity.wait_exponential(multiplier=1, min=3, max=60),
-    stop=tenacity.stop_after_attempt(5),
+    wait=tenacity.wait_exponential(multiplier=2, min=5, max=120),
+    stop=tenacity.stop_after_attempt(8),
     retry=tenacity.retry_if_exception_type(
         (gspread.exceptions.APIError, ConnectionError)
     ),
@@ -223,9 +223,9 @@ def write_tab(ss, title, df, hdr_bg="navy", skip_cols=None):
             if bg:
                 cell_fmts.append({"range": f"{col_letter}{ri}",
                                    "format": {"backgroundColor": bg}})
-    for i in range(0, len(cell_fmts), 60):
+    for i in range(0, len(cell_fmts), 1000):
         try:
-            _api(ws.batch_format, cell_fmts[i:i + 60])
+            _api(ws.batch_format, cell_fmts[i:i + 1000])
             time.sleep(0.2)
         except Exception:
             pass
