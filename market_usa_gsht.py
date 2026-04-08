@@ -78,7 +78,7 @@ def _get_ws(ss, title, rows=3000, cols=60):
     try:    return ss.worksheet(title)
     except: return ss.add_worksheet(title=title, rows=rows, cols=cols)
 
-@tenacity.retry(wait=tenacity.wait_exponential(min=3,max=60),stop=tenacity.stop_after_attempt(5),
+@tenacity.retry(wait=tenacity.wait_exponential(min=5,max=120),stop=tenacity.stop_after_attempt(8),
                 retry=tenacity.retry_if_exception_type((gspread.exceptions.APIError,ConnectionError)),reraise=True)
 def _api(fn, *args, **kwargs): return fn(*args, **kwargs)
 
@@ -118,7 +118,7 @@ def write_tab(ss, title, df, hdr_bg="navy"):
     display_cols=[c for c in df.columns if not c.startswith("_")]
     df_out=df[display_cols].copy().replace([float("inf"),float("-inf")],"").fillna("")
     nr,nc=len(df_out)+1,len(df_out.columns)
-    ws=_get_ws(ss,title,rows=max(nr+50,500),cols=max(nc+5,30))
+    ws = _api(_get_ws, ss, title, rows=max(nr + 50, 500), cols=max(nc + 5, 30))
     _api(ws.clear); time.sleep(0.5)
     _api(set_with_dataframe,ws,df_out,resize=True); time.sleep(0.5)
     try:
@@ -136,14 +136,14 @@ def write_tab(ss, title, df, hdr_bg="navy"):
         for ri,val in enumerate(df_out[col],start=2):
             bg=_cell_bg(val,col)
             if bg: cell_fmts.append({"range":f"{ltr}{ri}","format":{"backgroundColor":bg}})
-    for i in range(0,len(cell_fmts),60):
-        try: _api(ws.batch_format,cell_fmts[i:i+60]); time.sleep(0.2)
+    for i in range(0,len(cell_fmts),1000):
+        try: _api(ws.batch_format,cell_fmts[i:i+1000]); time.sleep(0.2)
         except Exception: pass
     time.sleep(0.8)
     print(f"    ✓ '{title}' — {len(df_out)} rows × {len(df_out.columns)} cols")
 
 def write_dashboard_tab(ss, dash_df, market):
-    title="📋 Dashboard"; ws=_get_ws(ss,title,rows=200,cols=2)
+    title="📋 Dashboard"; ws = _api(_get_ws, ss, title, rows=200, cols=2)
     _api(ws.clear); time.sleep(0.4)
     if dash_df is None or dash_df.empty: _api(ws.update,"A1",[["No data."]]); return
     clean=dash_df.copy().fillna("").astype(str)
