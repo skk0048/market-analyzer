@@ -1,30 +1,23 @@
 # ════════════════════════════════════════════════════════════════════════════
-#  FundaTechno Market Analysis — GitHub Actions v5.2
+#  FundaTechno Market Analysis — GitHub Actions v5.4
 #
-#  SCHEDULE  (cron syntax — all times UTC):
-#    India closes at 10:00 UTC (15:30 IST)  → runs at 10:30 UTC
-#    US    closes at 21:00 UTC (16:00 ET)   → runs at 21:30 UTC
+#  SCHEDULE (all times UTC):
+#    India Run 1 → 04:30 UTC = 10:00 AM IST
+#    India Run 2 → 09:00 UTC = 02:30 PM IST
+#    India Run 3 → 11:30 UTC = 05:00 PM IST
+#    USA   Run 1 → 21:30 UTC = 03:00 AM IST next day
 #
-#  HOW TO CHANGE THE TIME:
-#    Edit the two cron lines below.
-#    Format: "minute hour day-of-month month day-of-week"
-#    Examples:
-#      "30 10 * * 1-5" = 10:30 UTC, Mon-Fri
-#      "0 21 * * 1-5"  = 21:00 UTC, Mon-Fri
-#    https://crontab.guru is a handy tool.
+#  GOLDEN RULE: The cron string in `schedule:` must be copied CHARACTER-FOR-CHARACTER
+#  into the matching `github.event.schedule ==` check. One space difference = skipped.
 #
-#  HOW TO ADD MORE RUNS PER DAY:
-#    Add extra cron entries under schedule:
-#      - cron: "30 10 * * 1-5"   # India post-close
-#      - cron: "0  6  * * 1-5"   # India pre-open (optional)
-#      - cron: "30 21 * * 1-5"   # US post-close
+#  HOW TO ADD MORE SCRIPTS IN FUTURE:
+#    1. Add a new cron under `schedule:`
+#    2. Add a new job with matching `if` condition
+#    3. Change only the `run:` line to point to your new .py file
 #
-#  HOW TO FORCE-RUN MANUALLY:
-#    GitHub repo → Actions tab → "Market Analysis" → "Run workflow" button
-#
-#  REQUIRED GITHUB SECRETS (Settings → Secrets → Actions):
-#    GOOGLE_CREDENTIALS     — full content of your service account JSON
-#    GOOGLE_SHEET_URL       — India sheet URL  (https://docs.google.com/...)
+#  REQUIRED GITHUB SECRETS:
+#    GOOGLE_CREDENTIALS     — service account JSON content
+#    GOOGLE_SHEET_URL       — India sheet URL
 #    GOOGLE_SHEET_URL_USA   — US sheet URL
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -32,10 +25,11 @@ name: Market Analysis
 
 on:
   schedule:
-    - cron: "30 4 * * 1-5"   # India: post-close (10:30 UTC = 16:00 IST)
-    - cron: "0 9 * * 1-5"   # USA:   post-close (21:30 UTC = 16:30 ET)
-    - cron: "30 11 * * 1-5"   # USA:   post-close (21:30 UTC = 16:30 ET)
-  workflow_dispatch:           # manual trigger via GitHub Actions UI
+    - cron: "30 4 * * 1-5"    # India Run 1 → 04:30 UTC = 10:00 AM IST
+    - cron: "0 9 * * 1-5"     # India Run 2 → 09:00 UTC = 02:30 PM IST
+    - cron: "30 11 * * 1-5"   # India Run 3 → 11:30 UTC = 05:00 PM IST
+    - cron: "30 21 * * 1-5"   # USA   Run 1 → 21:30 UTC = 03:00 AM IST next day
+  workflow_dispatch:
     inputs:
       market:
         description: "Which market to run (india / usa / both)"
@@ -45,39 +39,39 @@ on:
         options: [both, india, usa]
 
 jobs:
+
   # ─────────────────────────────────────────────────────────────────────────
   run-india:
     name: India Market Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # Run on schedule, or when manually triggered with market = india/both
     if: |
-      github.event_name == 'schedule' && github.event.schedule == '30 10 * * 1-5' ||
-      github.event_name == 'workflow_dispatch' && (
+      (github.event_name == 'schedule' && (
+        github.event.schedule == '30 4 * * 1-5'  ||
+        github.event.schedule == '0 9 * * 1-5'   ||
+        github.event.schedule == '30 11 * * 1-5'
+      )) ||
+      (github.event_name == 'workflow_dispatch' && (
         github.event.inputs.market == 'india' ||
         github.event.inputs.market == 'both'
-      )
+      ))
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+      - name: Install dependencies
+        run: pip install --upgrade pip && pip install -r requirements.txt
 
-      - name: Write Google credentials to file
+      - name: Write credentials
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: echo "$GOOGLE_CREDENTIALS" > /tmp/google_credentials.json
 
-      - name: Run India analysis → Google Sheets
+      - name: Run India analysis
         env:
           GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
@@ -93,32 +87,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     if: |
-      github.event_name == 'schedule' && github.event.schedule == '30 21 * * 1-5' ||
-      github.event_name == 'workflow_dispatch' && (
+      (github.event_name == 'schedule' && github.event.schedule == '30 21 * * 1-5') ||
+      (github.event_name == 'workflow_dispatch' && (
         github.event.inputs.market == 'usa' ||
         github.event.inputs.market == 'both'
-      )
+      ))
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+      - name: Install dependencies
+        run: pip install --upgrade pip && pip install -r requirements.txt
 
-      - name: Write Google credentials to file
+      - name: Write credentials
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: echo "$GOOGLE_CREDENTIALS" > /tmp/google_credentials.json
 
-      - name: Run USA analysis → Google Sheets
+      - name: Run USA analysis
         env:
           GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
           GOOGLE_SHEET_URL_USA: ${{ secrets.GOOGLE_SHEET_URL_USA }}
@@ -127,3 +117,31 @@ jobs:
       - name: Remove credentials
         if: always()
         run: rm -f /tmp/google_credentials.json
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # TEMPLATE — copy this block to add a new script in future
+  # run-newscript:
+  #   name: New Script Analysis
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 60
+  #   if: |
+  #     (github.event_name == 'schedule' && github.event.schedule == 'MM HH * * 1-5') ||
+  #     (github.event_name == 'workflow_dispatch' && github.event.inputs.market == 'both')
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.11"
+  #         cache: "pip"
+  #     - run: pip install --upgrade pip && pip install -r requirements.txt
+  #     - name: Write credentials
+  #       env:
+  #         GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+  #       run: echo "$GOOGLE_CREDENTIALS" > /tmp/google_credentials.json
+  #     - name: Run new script
+  #       env:
+  #         GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
+  #       run: python your_new_script.py
+  #     - name: Remove credentials
+  #       if: always()
+  #       run: rm -f /tmp/google_credentials.json
