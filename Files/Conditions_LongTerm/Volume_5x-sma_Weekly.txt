@@ -1,0 +1,1 @@
+( {57960} ( weekly "close - 1 candle ago close / 1 candle ago close * 100" <= 2 and weekly volume >= weekly ema( weekly volume , 14 ) * 3 ) )

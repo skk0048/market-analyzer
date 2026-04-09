@@ -1,0 +1,1 @@
+( {cash} ( monthly volume > monthly sma( monthly volume , 14 ) * 5 and monthly "close - 1 candle ago close / 1 candle ago close * 100" > industry and quarterly net profit/reported profit after tax > 1 quarter ago max( 4 , quarterly net profit/reported profit after tax ) ) ) 

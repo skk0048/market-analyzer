@@ -1,0 +1,1 @@
+( {33619} ( 5 days ago max( 60 , latest rsi( 14 ) ) > 80 and 5 days ago max( 60 , latest rsi( 14 ) ) > latest max( 5 , latest rsi( 14 ) ) and 5 days ago max( 60 , latest close ) < latest max( 5 , latest close ) ) )

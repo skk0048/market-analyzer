@@ -1,0 +1,1 @@
+( {cash} ( market cap >= 5000 and market cap <= 10000 and latest close >= latest ema( latest close , 212 ) and latest close >= 1 day ago max( 1000 , latest close ) * 0.96 and monthly volume >= 1 month ago sma( monthly volume , 12 ) and quarterly net profit/reported profit after tax >= 1 ) )

@@ -1,0 +1,1 @@
+( {57960} ( latest "close - 1 candle ago close / 1 candle ago close * 100" <= 2 and latest volume >= latest ema( latest volume , 14 ) * 5 ) )

@@ -1,0 +1,1 @@
+( {57960} ( latest volume > 1 day ago max( 1000 , latest volume ) and quarterly net profit/reported profit after tax > 0 and yearly net profit/reported profit after tax > 0 ) )

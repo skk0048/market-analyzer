@@ -1,0 +1,1 @@
+( {33489} ( monthly rsi( 14 ) >= 80 and weekly rsi( 14 ) >= 75 and latest rsi( 14 ) >= 60 ) )

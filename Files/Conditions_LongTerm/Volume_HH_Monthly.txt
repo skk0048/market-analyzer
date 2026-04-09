@@ -1,0 +1,1 @@
+( {57960} ( monthly volume > 1 month ago max( 40 , monthly volume ) and quarterly net profit/reported profit after tax > 0 and yearly net profit/reported profit after tax > 0 ) )

@@ -1,0 +1,1 @@
+( {57960} ( daily close > ( 1 day ago max ( 252 , daily high ) - ( daily avg true range ( 14 ) * 2 ) ) and daily close <= 1 day ago max ( 252 , daily high ) and yearly net profit/reported profit after tax > 1 year ago net profit/reported profit after tax * 1.05 and daily close > daily sma ( daily close , 20 ) and yearly net sales > 1 year ago net sales * 1.20 ) )

@@ -1,0 +1,1 @@
+( {cash} ( weekly open > weekly close and weekly open < 1 week ago close and 1 week ago open > 1 week ago close and 1 week ago close > 2 weeks ago close and 2 weeks ago close > 3 weeks ago close and 3 weeks ago open < 3 weeks ago close ) )

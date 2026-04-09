@@ -1,0 +1,1 @@
+( {57960} ( 2 days ago open > 2 days ago close and 1 day ago open > 2 days ago close and 1 day ago close > 2 days ago high and 2 days ago low <= 2 days ago min( 3 , 2 days ago low ) and 1 day ago "close - 1 candle ago close / 1 candle ago close * 100" > .5 and 5 days ago high > 2 days ago low and latest close >= latest ema( latest close , 200 ) ) ) 

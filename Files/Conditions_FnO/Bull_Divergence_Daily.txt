@@ -1,0 +1,1 @@
+( {33489} ( 5 days ago min( 60 , latest rsi( 14 ) ) < 1 day ago min( 5 , latest rsi( 14 ) ) and 5 days ago min( 60 , latest close ) > 1 day ago min( 5 , latest close ) and 5 days ago min( 60 , latest rsi( 14 ) ) < 21 ) )

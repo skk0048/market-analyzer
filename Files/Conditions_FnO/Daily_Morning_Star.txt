@@ -1,0 +1,1 @@
+( {57960} ( latest open < latest close and latest open > 1 day ago close and 1 day ago open < 1 day ago close and 1 day ago close < 2 days ago close and 2 days ago open > 2 days ago close and 2 days ago close < 3 days ago close and 3 days ago open > 3 days ago close and latest volume > 2 days ago volume ) )

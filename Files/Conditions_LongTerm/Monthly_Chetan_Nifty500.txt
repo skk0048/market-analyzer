@@ -1,0 +1,1 @@
+( {cash} ( ( {57960} ( monthly close > 1 month ago max ( 36 , monthly high ) and monthly "close - 1 candle ago close / 1 candle ago close * 100" >= industry and quarterly profit before tax >= 1 quarter ago profit before tax ) ) ) ) 

@@ -1,0 +1,1 @@
+( {33489} ( latest volume > latest ema( latest volume , 14 ) * 2 and( abs( latest close - 1 day ago close ) / 1 day ago close ) <= 0.02 ))

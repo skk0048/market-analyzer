@@ -1,0 +1,1 @@
+( {33489} ( latest open >= 1 day ago low and latest close <= latest ema( latest close , 200 ) and( {33489} ( 1 day ago open = 1 day ago high or 1 day ago high <= 1 day ago open * 1.001 ) ) ) ) 

@@ -1,0 +1,1 @@
+( {57960} ( ( {cash} ( daily close > 1 day ago max ( 750 , daily high ) and 1 day ago  close <= 2 day ago  max ( 750 , daily high ) and daily close > 752 days ago max ( 500 , daily high ) ) ) ) )

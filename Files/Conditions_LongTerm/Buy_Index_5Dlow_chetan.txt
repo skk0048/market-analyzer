@@ -1,0 +1,1 @@
+( {45603} ( 1 day ago min( 5 , 1 day ago low ) = 2 days ago min( 5 , 1 day ago low ) and latest close < latest sma( latest close , 5 ) and latest close > latest open and latest close > 1 day ago low ) )

@@ -1,0 +1,1 @@
+( {57960} ( latest volume > ( ( latest sma( volume,30 ) * 5 ) ) and latest close > 1 day ago close and latest close > 10 and quarterly net profit/reported profit after tax > 1 quarter ago net profit/reported profit after tax and quarterly net profit/reported profit after tax > 0 ) )

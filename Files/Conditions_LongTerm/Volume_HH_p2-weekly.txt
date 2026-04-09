@@ -1,0 +1,1 @@
+( {57960} ( 2 weeks ago volume > 3 weeks ago max( 200 , 2 weeks ago volume ) and quarterly net profit/reported profit after tax > 0 and yearly net profit/reported profit after tax > 0 ) )

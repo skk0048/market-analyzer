@@ -1,0 +1,1 @@
+( {33489} ( daily close < daily lower bollinger band( 20 , 1 ) and 1 day ago  close >= 1 day ago  lower bollinger band( 20 , 1 ) and daily close < daily open and 1 day ago close > daily open and daily close < daily sma( daily close , 20 ) and daily close < daily ema( daily close , 200 ) ) )

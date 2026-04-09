@@ -1,0 +1,1 @@
+( {33489} ( latest close >= latest ema( 1 day ago close , 200 ) and( {cash} ( latest open = latest low or latest low >= latest open * 1.005 ) ) ) )
