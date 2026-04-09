@@ -9,3 +9,12 @@ gspread-dataframe>=4.0.0
 google-auth>=2.22.0
 tenacity>=8.2.0
 requests>=2.31.0
+# existing packages (keep whatever you already have)
+pandas
+requests
+beautifulsoup4
+lxml
+
+# add these for Google Sheets support
+gspread>=6.0.0
+google-auth>=2.0.0
