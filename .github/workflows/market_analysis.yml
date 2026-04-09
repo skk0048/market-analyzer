@@ -1,42 +1,46 @@
 # ════════════════════════════════════════════════════════════════════════════
-#  FundaTechno Market Analysis — GitHub Actions v5.4
+#  FundaTechno Market Analysis — GitHub Actions v5.6
 #
 #  SCHEDULE (all times UTC):
-#    India Run 1 → 04:30 UTC = 10:00 AM IST
-#    India Run 2 → 09:00 UTC = 02:30 PM IST
-#    India Run 3 → 11:30 UTC = 05:00 PM IST
-#    USA   Run 1 → 21:30 UTC = 03:00 AM IST next day
+#    India     Run 1 → 04:30 UTC = 10:00 AM IST
+#    India     Run 2 → 09:00 UTC = 02:30 PM IST
+#    India     Run 3 → 11:30 UTC = 05:00 PM IST
+#    USA       Run 1 → 21:30 UTC = 03:00 AM IST next day
+#    Scans     Run 1 → 05:00 UTC = 10:30 AM IST  (LongTerm + FnO together)
+#    Scans     Run 2 → 12:00 UTC = 05:30 PM IST  (LongTerm + FnO together)
 #
-#  GOLDEN RULE: The cron string in `schedule:` must be copied CHARACTER-FOR-CHARACTER
-#  into the matching `github.event.schedule ==` check. One space difference = skipped.
-#
-#  HOW TO ADD MORE SCRIPTS IN FUTURE:
-#    1. Add a new cron under `schedule:`
-#    2. Add a new job with matching `if` condition
-#    3. Change only the `run:` line to point to your new .py file
+#  GOLDEN RULE: cron string in schedule: must match github.event.schedule ==
+#  exactly, character-for-character. One space difference = job skipped.
 #
 #  REQUIRED GITHUB SECRETS:
-#    GOOGLE_CREDENTIALS     — service account JSON content
-#    GOOGLE_SHEET_URL       — India sheet URL
-#    GOOGLE_SHEET_URL_USA   — US sheet URL
+#    GOOGLE_CREDENTIALS        — service account JSON content
+#    GOOGLE_SHEET_URL          — India sheet URL
+#    GOOGLE_SHEET_URL_USA      — US sheet URL
+#    GOOGLE_SHEET_URL_SCANS    — Scans sheet URL (LongTerm, FnO, etc. tabs)
+#
+#  TO ADD A NEW SCAN (e.g. Breakout.py):
+#    1. Copy LongTerm.py → Breakout.py, change 3 CONFIG lines
+#    2. Create Files/Conditions_Breakout/ with your .txt files
+#    3. Add run step inside run-scans job below (just one extra line)
 # ════════════════════════════════════════════════════════════════════════════
 
 name: Market Analysis
 
 on:
   schedule:
-    - cron: "30 4 * * 1-5"    # India Run 1 → 04:30 UTC = 10:00 AM IST
-    - cron: "0 9 * * 1-5"     # India Run 2 → 09:00 UTC = 02:30 PM IST
-    - cron: "30 11 * * 1-5"   # India Run 3 → 11:30 UTC = 05:00 PM IST
-    - cron: "30 21 * * 1-5"   # USA   Run 1 → 21:30 UTC = 03:00 AM IST next day
+    - cron: "30 4 * * 1-5"    # India  Run 1 → 04:30 UTC = 10:00 AM IST
+    - cron: "0 9 * * 1-5"     # India  Run 2 → 09:00 UTC = 02:30 PM IST
+    - cron: "30 21 * * 1-5"   # USA    Run 1 → 21:30 UTC = 03:00 AM IST next day
+    - cron: "29 5 * * 1-5"     # Scans  Run 1 → 05:00 UTC = 10:30 AM IST
+    - cron: "1 9 * * 1-5"    # Scans  Run 2 → 12:00 UTC = 05:30 PM IST
   workflow_dispatch:
     inputs:
       market:
-        description: "Which market to run (india / usa / both)"
+        description: "Which market to run"
         required: false
-        default: "both"
+        default: "all"
         type: choice
-        options: [both, india, usa]
+        options: [all, india, usa, scans]
 
 jobs:
 
@@ -53,30 +57,25 @@ jobs:
       )) ||
       (github.event_name == 'workflow_dispatch' && (
         github.event.inputs.market == 'india' ||
-        github.event.inputs.market == 'both'
+        github.event.inputs.market == 'all'
       ))
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
-
       - name: Install dependencies
         run: pip install --upgrade pip && pip install -r requirements.txt
-
       - name: Write credentials
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: echo "$GOOGLE_CREDENTIALS" > /tmp/google_credentials.json
-
       - name: Run India analysis
         env:
           GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
         run: python market_india_gsht.py
-
       - name: Remove credentials
         if: always()
         run: rm -f /tmp/google_credentials.json
@@ -90,58 +89,76 @@ jobs:
       (github.event_name == 'schedule' && github.event.schedule == '30 21 * * 1-5') ||
       (github.event_name == 'workflow_dispatch' && (
         github.event.inputs.market == 'usa' ||
-        github.event.inputs.market == 'both'
+        github.event.inputs.market == 'all'
       ))
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
-
       - name: Install dependencies
         run: pip install --upgrade pip && pip install -r requirements.txt
-
       - name: Write credentials
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: echo "$GOOGLE_CREDENTIALS" > /tmp/google_credentials.json
-
       - name: Run USA analysis
         env:
           GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
           GOOGLE_SHEET_URL_USA: ${{ secrets.GOOGLE_SHEET_URL_USA }}
         run: python market_usa_gsht.py
-
       - name: Remove credentials
         if: always()
         run: rm -f /tmp/google_credentials.json
 
   # ─────────────────────────────────────────────────────────────────────────
-  # TEMPLATE — copy this block to add a new script in future
-  # run-newscript:
-  #   name: New Script Analysis
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 60
-  #   if: |
-  #     (github.event_name == 'schedule' && github.event.schedule == 'MM HH * * 1-5') ||
-  #     (github.event_name == 'workflow_dispatch' && github.event.inputs.market == 'both')
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-python@v5
-  #       with:
-  #         python-version: "3.11"
-  #         cache: "pip"
-  #     - run: pip install --upgrade pip && pip install -r requirements.txt
-  #     - name: Write credentials
-  #       env:
-  #         GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-  #       run: echo "$GOOGLE_CREDENTIALS" > /tmp/google_credentials.json
-  #     - name: Run new script
-  #       env:
-  #         GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
-  #       run: python your_new_script.py
-  #     - name: Remove credentials
-  #       if: always()
-  #       run: rm -f /tmp/google_credentials.json
+  run-scans:
+    name: Chartink Scans (LongTerm + FnO + ...)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: |
+      (github.event_name == 'schedule' && (
+        github.event.schedule == '0 5 * * 1-5'  ||
+        github.event.schedule == '0 12 * * 1-5'
+      )) ||
+      (github.event_name == 'workflow_dispatch' && (
+        github.event.inputs.market == 'scans' ||
+        github.event.inputs.market == 'all'
+      ))
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install dependencies
+        run: pip install --upgrade pip && pip install -r requirements.txt
+      - name: Write credentials
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: echo "$GOOGLE_CREDENTIALS" > /tmp/google_credentials.json
+
+      # ── Run each scan script in sequence ──────────────────────────────
+      # TO ADD A NEW SCAN: just add one line here → python YourNewScan.py
+      - name: Run LongTerm scan
+        env:
+          GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
+          GOOGLE_SHEET_URL_SCANS: ${{ secrets.GOOGLE_SHEET_URL_SCANS }}
+        run: python LongTerm.py
+
+      - name: Run FnO scan
+        env:
+          GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
+          GOOGLE_SHEET_URL_SCANS: ${{ secrets.GOOGLE_SHEET_URL_SCANS }}
+        run: python FnO.py
+
+      # - name: Run Breakout scan          ← uncomment when ready
+      #   env:
+      #     GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
+      #     GOOGLE_SHEET_URL_SCANS: ${{ secrets.GOOGLE_SHEET_URL_SCANS }}
+      #   run: python Breakout.py
+
+      - name: Remove credentials
+        if: always()
+        run: rm -f /tmp/google_credentials.json
