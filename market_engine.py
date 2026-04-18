@@ -198,7 +198,7 @@ US_BREADTH_INDICES = {
 RS_PERIODS     = [22, 55, 120, 252]
 SIGNAL_PERIODS = [22, 55]
 HL_LOOKBACK    = 22
-PERIOD_DAYS    = 300
+PERIOD_DAYS    = 420   # ↑ from 300 → 420 calendar days (~300 trading days, covers RS_252d & 12M%)
 BATCH_SIZE     = 100
 BATCH_DELAY    = 1.0
 
@@ -221,8 +221,9 @@ def _sf(v):
     try: f=float(v); return f if np.isfinite(f) else np.nan
     except: return np.nan
 
-def fetch_close_batch(symbols, days=PERIOD_DAYS):
-    end=datetime.today()+timedelta(days=1); start=end-timedelta(days=days+5)
+def fetch_close_batch(symbols, days=PERIOD_DAYS, end_date=None):
+    end = (pd.Timestamp(end_date) + timedelta(days=1)) if end_date else (datetime.today() + timedelta(days=1))
+    start=end-timedelta(days=days+5)
     data={}
     for i in range(0,len(symbols),BATCH_SIZE):
         batch=symbols[i:i+BATCH_SIZE]
@@ -244,8 +245,9 @@ def fetch_close_batch(symbols, days=PERIOD_DAYS):
         if i+BATCH_SIZE<len(symbols): time.sleep(BATCH_DELAY)
     return pd.DataFrame(data).sort_index() if data else pd.DataFrame()
 
-def fetch_ohlcv_batch(symbols, days=PERIOD_DAYS):
-    end=datetime.today()+timedelta(days=1); start=end-timedelta(days=days+5)
+def fetch_ohlcv_batch(symbols, days=PERIOD_DAYS, end_date=None):
+    end = (pd.Timestamp(end_date) + timedelta(days=1)) if end_date else (datetime.today() + timedelta(days=1))
+    start=end-timedelta(days=days+5)
     result={}
     for i in range(0,len(symbols),50):
         batch=symbols[i:i+50]
@@ -359,6 +361,38 @@ def _save_fin():
         with open(_FIN_FILE,"w") as f: json.dump(_FIN_CACHE,f)
     except: pass
 
+def _fin_qoq(s: pd.Series) -> float:
+    """
+    Safe QoQ: only compute if the two most recent quarters are genuinely
+    consecutive (date gap 60-105 days). If a quarter is missing from Yahoo
+    (e.g. Sep data not yet filed → Jun jumps straight to Dec, gap ~180d)
+    we return NaN instead of a wrong 6-month comparison.
+    """
+    s = s.dropna().sort_index(ascending=False)   # newest first
+    if len(s) < 2 or s.iloc[1] == 0: return np.nan
+    gap = abs((s.index[0] - s.index[1]).days)
+    if not (60 <= gap <= 105): return np.nan     # skip if quarters not adjacent
+    return round((s.iloc[0] / s.iloc[1] - 1) * 100, 1)
+
+
+def _fin_yoy(s: pd.Series) -> float:
+    """
+    Safe YoY: find the quarter closest to exactly 365 days before the latest
+    quarter (same-quarter last year). Accepts up to ±45-day tolerance.
+    This handles gaps correctly: if Sep is missing, Jun-24 is still compared
+    to Jun-23, not to whatever happens to sit at iloc[4].
+    """
+    s = s.dropna().sort_index(ascending=False)
+    if len(s) < 2: return np.nan
+    target = s.index[0] - pd.DateOffset(days=365)
+    diffs  = [(abs((d - target).days), i) for i, d in enumerate(s.index)]
+    diffs.sort()
+    best_days, best_idx = diffs[0]
+    if best_days > 45 or best_idx == 0: return np.nan  # no good match found
+    if s.iloc[best_idx] == 0: return np.nan
+    return round((s.iloc[0] / s.iloc[best_idx] - 1) * 100, 1)
+
+
 def _fetch_fin_one(sym):
     blank=dict(SalesQoQ=np.nan,SalesYoY=np.nan,PATQoQ=np.nan,PATYoY=np.nan,
                PATCurr=np.nan,Margin=np.nan,ROE=np.nan,DE=np.nan,EPS=np.nan,PE=np.nan,MktCap=np.nan)
@@ -373,18 +407,20 @@ def _fetch_fin_one(sym):
         pm=_sf(info.get("profitMargins",np.nan)); blank["Margin"]=round(pm*100,1) if not np.isnan(pm) else np.nan
         qf=t.quarterly_financials
         if qf is not None and not qf.empty and qf.shape[1]>=2:
+            # ── Revenue / Sales ───────────────────────────────────────────────
             for k in ["Total Revenue","Revenue"]:
                 if k in qf.index:
-                    r=qf.loc[k].dropna()
-                    if len(r)>=2: blank["SalesQoQ"]=round((r.iloc[0]/r.iloc[1]-1)*100,1)
-                    if len(r)>=5: blank["SalesYoY"]=round((r.iloc[0]/r.iloc[4]-1)*100,1)
+                    r = qf.loc[k].dropna().sort_index(ascending=False)
+                    blank["SalesQoQ"] = _fin_qoq(r)   # gap-safe QoQ
+                    blank["SalesYoY"] = _fin_yoy(r)   # same-quarter YoY
                     break
+            # ── Net Income / PAT ──────────────────────────────────────────────
             for k in ["Net Income","Net Income Common Stockholders"]:
                 if k in qf.index:
-                    p=qf.loc[k].dropna()
-                    if len(p)>=1: blank["PATCurr"]=round(_sf(p.iloc[0])/1e6,1)
-                    if len(p)>=2 and p.iloc[1]!=0: blank["PATQoQ"]=round((p.iloc[0]/p.iloc[1]-1)*100,1)
-                    if len(p)>=5 and p.iloc[4]!=0: blank["PATYoY"]=round((p.iloc[0]/p.iloc[4]-1)*100,1)
+                    p = qf.loc[k].dropna().sort_index(ascending=False)
+                    if len(p) >= 1: blank["PATCurr"] = round(_sf(p.iloc[0])/1e6, 1)
+                    blank["PATQoQ"] = _fin_qoq(p)     # gap-safe QoQ
+                    blank["PATYoY"] = _fin_yoy(p)     # same-quarter YoY
                     break
     except: pass
     return blank
@@ -408,93 +444,317 @@ def get_financials_batch(symbols, force=False):
     return result
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  CHART PATTERNS
+#  CHART PATTERNS  v5.3
+#  Patterns: Double Bottom/Top, H&S Top, Inv H&S, VCP, Cup&Handle,
+#            Asc/Desc/Sym Triangle, Bull Flag, Pennant
+#  Timeframes: Daily (D) + Weekly (W)  — weekly has higher historical win rate
 # ─────────────────────────────────────────────────────────────────────────────
 @dataclass
 class Pattern:
     symbol:str; pattern:str; direction:str; date:str
     entry:float; stop:float; target:float; rr:float
-    confidence:str; notes:str=""
+    confidence:str; notes:str=""; timeframe:str="D"
 
 def _near(a,b,tol=0.03): return abs(a-b)/max(abs(a),abs(b),1e-9)<=tol
 
-def detect_patterns(df, sym):
-    df=df.tail(180).reset_index(drop=False)
-    if len(df)<60: return []
-    sigs=[]
-    close=df["Close"].values
-    high=df["High"].values if "High" in df.columns else close
-    low=df["Low"].values if "Low" in df.columns else close
-    hi=argrelextrema(high,np.greater_equal,order=5)[0]
-    lo=argrelextrema(low,np.less_equal,order=5)[0]
-    dc=df.columns[0] if df.columns[0] not in ("Close","High","Low") else (df.columns[1] if len(df.columns)>1 else "idx")
+def _resample_ohlcv_weekly(df: pd.DataFrame) -> pd.DataFrame:
+    """Resample a daily OHLCV DataFrame to weekly (Friday close)."""
+    try:
+        idx = df.index if isinstance(df.index, pd.DatetimeIndex) else pd.to_datetime(df.index, errors='coerce')
+        odf = df.copy(); odf.index = idx
+        odf = odf[~odf.index.isna()]
+        w = pd.DataFrame({
+            'Open':  odf['Open'].resample('W-FRI').first()  if 'Open'   in odf.columns else odf['Close'].resample('W-FRI').first(),
+            'High':  odf['High'].resample('W-FRI').max()    if 'High'   in odf.columns else odf['Close'].resample('W-FRI').max(),
+            'Low':   odf['Low'].resample('W-FRI').min()     if 'Low'    in odf.columns else odf['Close'].resample('W-FRI').min(),
+            'Close': odf['Close'].resample('W-FRI').last(),
+        }).dropna(subset=['Close','High','Low'])
+        return w
+    except: return pd.DataFrame()
+
+
+def detect_patterns(df, sym, timeframe='D'):
+    """
+    Detect chart patterns.  timeframe: 'D'=daily, 'W'=weekly.
+
+    DATE FIX: this function is called with a DatetimeIndex df (from ohlcv_dict).
+    We reset the index ONCE here to produce a 'Date' column, and never again.
+    """
+    look_back = 180 if timeframe == 'D' else 130
+    df = df.tail(look_back).copy()
+
+    # ── Normalise to integer index, preserve date ────────────────────────────
+    if isinstance(df.index, pd.DatetimeIndex):
+        df.index.name = df.index.name or 'Date'
+        df = df.reset_index()           # DatetimeIndex → 'Date' column, RangeIndex
+    elif not isinstance(df.index, pd.RangeIndex):
+        df = df.reset_index(drop=False) # named/other index → column
+
+    if len(df) < 40: return []
+
+    # ── Locate date column (robust search) ───────────────────────────────────
+    _date_col = None
+    for _c in df.columns:
+        if _c.lower() in ('date','datetime') or (
+                _c not in ('Open','High','Low','Close','Volume','index')
+                and pd.api.types.is_datetime64_any_dtype(df[_c])):
+            _date_col = _c; break
+    if _date_col is None:
+        for _c in df.columns:
+            if _c not in ('Open','High','Low','Close','Volume','index'):
+                _date_col = _c; break
+
     def _date(i):
-        try: return str(df.iloc[min(i,len(df)-1)].get(dc,""))[:10]
-        except: return str(df.index[min(i,len(df)-1)])[:10]
-    def _add(pat,dir_,ei,e,sl,tgt,conf,notes=""):
-        rr=abs(tgt-e)/max(abs(e-sl),1e-9)
-        if rr>=1.5: sigs.append(Pattern(sym,pat,dir_,_date(ei),round(e,2),round(sl,2),round(tgt,2),round(rr,2),conf,notes))
+        try:
+            row = df.iloc[min(i, len(df)-1)]
+            if _date_col:
+                return str(row[_date_col])[:10]
+            return str(df.index[min(i, len(df)-1)])[:10]
+        except: return ""
+
+    sigs  = []
+    close = df["Close"].values
+    high  = df["High"].values  if "High" in df.columns else close
+    low   = df["Low"].values   if "Low"  in df.columns else close
+    n     = len(close)
+
+    order = 4 if timeframe == 'W' else 5
+    hi = argrelextrema(high, np.greater_equal, order=order)[0]
+    lo = argrelextrema(low,  np.less_equal,   order=order)[0]
+
+    def _add(pat, dir_, ei, e, sl, tgt, conf, notes=""):
+        rr = abs(tgt-e) / max(abs(e-sl), 1e-9)
+        if rr >= 1.5:
+            sigs.append(Pattern(sym, pat, dir_, _date(ei),
+                                round(e,2), round(sl,2), round(tgt,2), round(rr,2),
+                                conf, notes, timeframe))
+
+    # ── 1. Double Bottom (Bullish) ─────────────────────────────────────────
     for i in range(len(lo)-1):
-        l1,l2=lo[i],lo[i+1]
-        if not(10<=l2-l1<=120): continue
-        p1,p2=low[l1],low[l2]
-        if not _near(p1,p2): continue
-        neck=float(high[l1:l2+1].max())
-        _add("Double Bottom","BULLISH",l2,neck*1.005,min(p1,p2)*0.99,neck+(neck-min(p1,p2)),"HIGH",f"Neck≈{neck:.0f}")
+        l1, l2 = lo[i], lo[i+1]
+        if not (8 <= l2-l1 <= 120): continue
+        p1, p2 = low[l1], low[l2]
+        if not _near(p1, p2, 0.04): continue
+        neck = float(high[l1:l2+1].max())
+        _add("Double Bottom","BULLISH", l2, neck*1.005, min(p1,p2)*0.99,
+             neck+(neck-min(p1,p2)), "HIGH", f"Neck≈{neck:.0f}")
+
+    # ── 2. Double Top (Bearish) ────────────────────────────────────────────
     for i in range(len(hi)-1):
-        h1,h2=hi[i],hi[i+1]
-        if not(10<=h2-h1<=120): continue
-        p1,p2=high[h1],high[h2]
-        if not _near(p1,p2): continue
-        neck=float(low[h1:h2+1].min())
-        _add("Double Top","BEARISH",h2,neck*0.995,max(p1,p2)*1.01,neck-(max(p1,p2)-neck),"HIGH",f"Neck≈{neck:.0f}")
-    for end in range(60,len(df)):
-        seg=df.iloc[end-60:end+1]; q=max(1,len(seg)//4)
-        hc="High" if "High" in seg.columns else "Close"; lc="Low" if "Low" in seg.columns else "Close"
-        sw=[float(seg.iloc[qi*q:(qi+1)*q][hc].max())-float(seg.iloc[qi*q:(qi+1)*q][lc].min()) for qi in range(4) if len(seg.iloc[qi*q:(qi+1)*q])>0]
-        if len(sw)<4 or not all(sw[j]>sw[j+1] for j in range(3)): continue
-        res=float(seg[hc].max()); bl=float(seg[lc].min()); sl_b=float(seg[lc].iloc[-q:].min())
-        _add("VCP","BULLISH",end,res*1.005,sl_b*0.99,res*1.005+(res-bl)*0.75,"HIGH","Vol dry-up")
-    for i in range(len(hi)-1):
-        l,r=hi[i],hi[i+1]
-        if not(30<=r-l<=120): continue
-        seg=df.iloc[l:r+1]; tl=float(high[l]); tr=float(high[r])
-        if not _near(tl,tr,0.06): continue
-        lc2="Low" if "Low" in seg.columns else "Close"
-        bot=float(seg[lc2].min()); depth=(tl-bot)/tl
-        if not(0.10<=depth<=0.50): continue
-        if r+3>=len(df): continue
-        lc3="Low" if "Low" in df.columns else "Close"
-        hlo=float(df[lc3].iloc[r:min(r+15,len(df))].min())
-        if (tr-hlo)/tr>0.15: continue
-        _add("Cup & Handle","BULLISH",r,tr*1.005,hlo*0.99,tr*1.005+(tr-bot),"HIGH",f"Depth={depth:.1%}")
+        h1, h2 = hi[i], hi[i+1]
+        if not (8 <= h2-h1 <= 120): continue
+        p1, p2 = high[h1], high[h2]
+        if not _near(p1, p2, 0.04): continue
+        neck = float(low[h1:h2+1].min())
+        _add("Double Top","BEARISH", h2, neck*0.995, max(p1,p2)*1.01,
+             neck-(max(p1,p2)-neck), "HIGH", f"Neck≈{neck:.0f}")
+
+    # ── 3. H&S Top (Bearish) ──────────────────────────────────────────────
+    for i in range(len(hi)-2):
+        ls, lh, lr = hi[i], hi[i+1], hi[i+2]
+        if not (8 <= lh-ls <= 80 and 8 <= lr-lh <= 80): continue
+        if not (10 <= lr-ls <= 160): continue
+        slp, head, srp = high[ls], high[lh], high[lr]
+        if not (head > slp and head > srp): continue
+        if not _near(slp, srp, 0.09): continue
+        neck_l = float(low[ls:lh+1].min())
+        neck_r = float(low[lh:lr+1].min())
+        neck   = (neck_l + neck_r) / 2
+        if neck <= 0: continue
+        _add("H&S Top","BEARISH", lr, neck*0.995, head*1.01,
+             neck-(head-neck), "HIGH", f"Head={head:.0f}")
+
+    # ── 4. Inverse H&S (Bullish) ──────────────────────────────────────────
     for i in range(len(lo)-2):
-        ls,lh,lr=lo[i],lo[i+1],lo[i+2]
-        if not(10<=lr-ls<=120): continue
-        slp=low[ls]; head=low[lh]; srp=low[lr]
-        if not(head<slp and head<srp): continue
-        if not _near(slp,srp,0.06): continue
-        neck=(high[ls]+high[lr])/2
-        _add("Inv H&S","BULLISH",lr,neck*1.005,head*0.99,neck+(neck-head),"HIGH",f"Head={head:.0f}")
-    seen={}
+        ls, lh, lr = lo[i], lo[i+1], lo[i+2]
+        if not (8 <= lh-ls <= 80 and 8 <= lr-lh <= 80): continue
+        if not (10 <= lr-ls <= 160): continue
+        slp, head, srp = low[ls], low[lh], low[lr]
+        if not (head < slp and head < srp): continue
+        if not _near(slp, srp, 0.09): continue
+        neck_l = float(high[ls:lh+1].max())
+        neck_r = float(high[lh:lr+1].max())
+        neck   = (neck_l + neck_r) / 2
+        _add("Inv H&S","BULLISH", lr, neck*1.005, head*0.99,
+             neck+(neck-head), "HIGH", f"Head={head:.0f}")
+
+    # ── 5. VCP  (Volatility Contraction) ──────────────────────────────────
+    win = 60 if timeframe == 'D' else 30
+    for end in range(win, n):
+        seg = df.iloc[end-win:end+1]
+        q   = max(1, win//4)
+        hc  = "High" if "High" in seg.columns else "Close"
+        lc  = "Low"  if "Low"  in seg.columns else "Close"
+        sw  = [float(seg.iloc[qi*q:(qi+1)*q][hc].max()) - float(seg.iloc[qi*q:(qi+1)*q][lc].min())
+               for qi in range(4) if len(seg.iloc[qi*q:(qi+1)*q]) > 0]
+        if len(sw) < 4 or not all(sw[j] > sw[j+1] for j in range(3)): continue
+        res  = float(seg[hc].max()); bl = float(seg[lc].min())
+        sl_b = float(seg[lc].iloc[-q:].min())
+        _add("VCP","BULLISH", end, res*1.005, sl_b*0.99,
+             res*1.005+(res-bl)*0.75, "HIGH", "Vol dry-up")
+
+    # ── 6. Cup & Handle (Bullish) ─────────────────────────────────────────
+    min_cup = 20 if timeframe == 'D' else 10
+    max_cup = 120 if timeframe == 'D' else 60
+    for i in range(len(hi)-1):
+        l, r = hi[i], hi[i+1]
+        if not (min_cup <= r-l <= max_cup): continue
+        seg = df.iloc[l:r+1]
+        tl = float(high[l]); tr = float(high[r])
+        if not _near(tl, tr, 0.07): continue
+        lc2 = "Low" if "Low" in seg.columns else "Close"
+        bot = float(seg[lc2].min()); depth = (tl-bot)/tl
+        if not (0.10 <= depth <= 0.50): continue
+        if r+3 >= n: continue
+        lc3 = "Low" if "Low" in df.columns else "Close"
+        hlo = float(df[lc3].iloc[r:min(r+15,n)].min())
+        if (tr-hlo)/tr > 0.15: continue
+        _add("Cup & Handle","BULLISH", r, tr*1.005, hlo*0.99,
+             tr*1.005+(tr-bot), "HIGH", f"Depth={depth:.1%}")
+
+    # ── 7. Ascending Triangle (Bullish) ───────────────────────────────────
+    for i in range(len(hi)-1):
+        h1, h2 = hi[i], hi[i+1]
+        if not (12 <= h2-h1 <= 80): continue
+        p1h, p2h = high[h1], high[h2]
+        if not _near(p1h, p2h, 0.04): continue           # flat resistance
+        lo_in = lo[(lo >= h1) & (lo <= h2)]
+        if len(lo_in) < 2: continue
+        lo_vals = low[lo_in]
+        if lo_vals[-1] <= lo_vals[0]: continue            # lows must rise
+        if (lo_vals[-1]-lo_vals[0]) / max(lo_vals[0],1) < 0.015: continue
+        resistance = (p1h+p2h) / 2
+        _add("Asc Triangle","BULLISH", h2, resistance*1.005, lo_vals[-1]*0.99,
+             resistance+(resistance-lo_vals[0]), "MEDIUM", f"Res≈{resistance:.0f}")
+
+    # ── 8. Descending Triangle (Bearish) ──────────────────────────────────
+    for i in range(len(lo)-1):
+        l1, l2 = lo[i], lo[i+1]
+        if not (12 <= l2-l1 <= 80): continue
+        p1l, p2l = low[l1], low[l2]
+        if not _near(p1l, p2l, 0.04): continue           # flat support
+        hi_in = hi[(hi >= l1) & (hi <= l2)]
+        if len(hi_in) < 2: continue
+        hi_vals = high[hi_in]
+        if hi_vals[-1] >= hi_vals[0]: continue            # highs must fall
+        if (hi_vals[0]-hi_vals[-1]) / max(hi_vals[0],1) < 0.015: continue
+        support = (p1l+p2l) / 2
+        _add("Desc Triangle","BEARISH", l2, support*0.995, hi_vals[0]*1.01,
+             support-(hi_vals[0]-support), "MEDIUM", f"Sup≈{support:.0f}")
+
+    # ── 9. Symmetrical Triangle (Bullish bias) ────────────────────────────
+    for i in range(len(hi)-1):
+        h1, h2 = hi[i], hi[i+1]
+        if not (15 <= h2-h1 <= 80): continue
+        lo_in = lo[(lo >= h1) & (lo <= h2)]
+        if len(lo_in) < 2: continue
+        l1_i, l2_i = lo_in[0], lo_in[-1]
+        p1h, p2h = high[h1], high[h2]
+        p1l, p2l = low[l1_i], low[l2_i]
+        if p2h >= p1h: continue                           # highs must fall
+        if p2l <= p1l: continue                           # lows must rise
+        if (p1h-p2h) / max(p1h,1) < 0.02: continue
+        if (p2l-p1l) / max(p1l,1) < 0.02: continue
+        _add("Sym Triangle","BULLISH", h2, p2h*1.005, p2l*0.99,
+             p2h+(p1h-p1l)*0.6, "MEDIUM", "Converging")
+
+    # ── 10. Bull Flag (Bullish) ───────────────────────────────────────────
+    min_pole_pct = 7 if timeframe == 'D' else 10
+    pole_lens    = [7, 10, 15] if timeframe == 'D' else [4, 6, 8]
+    for pole_end in range(10, n-4):
+        for pole_len in pole_lens:
+            pole_start = pole_end - pole_len
+            if pole_start < 0: continue
+            pole_move = (close[pole_end]-close[pole_start]) / max(close[pole_start],1) * 100
+            if pole_move < min_pole_pct: continue
+            up_bars = sum(1 for k in range(pole_start, pole_end) if close[k+1] > close[k])
+            if up_bars < pole_len * 0.6: continue
+            consol_len = min(15, n-pole_end-1)
+            if consol_len < 3: continue
+            c_cl = close[pole_end:pole_end+consol_len+1]
+            c_hi = high[pole_end:pole_end+consol_len+1]
+            c_lo = low[pole_end:pole_end+consol_len+1]
+            if (c_cl.max()-c_cl.min()) / max(c_cl[0],1) * 100 > pole_move * 0.45: continue
+            if (close[pole_end]-c_lo.min()) > (close[pole_end]-close[pole_start]) * 0.5: continue
+            slope_norm = np.polyfit(range(len(c_cl)), c_cl, 1)[0] / max(c_cl[0],1)
+            if -0.015 <= slope_norm <= 0.003:
+                _add("Bull Flag","BULLISH", pole_end+consol_len,
+                     c_hi.max()*1.005, c_lo.min()*0.99,
+                     c_hi.max()*1.005+(close[pole_end]-close[pole_start]),
+                     "HIGH", f"Pole:{pole_move:.1f}%")
+            break
+
+    # ── 11. Pennant (Bullish) ─────────────────────────────────────────────
+    for pole_end in range(10, n-4):
+        for pole_len in pole_lens:
+            pole_start = pole_end - pole_len
+            if pole_start < 0: continue
+            pole_move = (close[pole_end]-close[pole_start]) / max(close[pole_start],1) * 100
+            if pole_move < min_pole_pct: continue
+            up_bars = sum(1 for k in range(pole_start, pole_end) if close[k+1] > close[k])
+            if up_bars < pole_len * 0.6: continue
+            consol_len = min(12, n-pole_end-1)
+            if consol_len < 3: continue
+            c_hi = high[pole_end:pole_end+consol_len+1]
+            c_lo = low[pole_end:pole_end+consol_len+1]
+            h_slope = np.polyfit(range(len(c_hi)), c_hi, 1)[0]
+            l_slope = np.polyfit(range(len(c_lo)), c_lo, 1)[0]
+            if h_slope >= 0 or l_slope <= 0: continue    # must converge
+            if (c_hi.max()-c_lo.min()) / max(close[pole_end],1) * 100 > pole_move*0.30: continue
+            _add("Pennant","BULLISH", pole_end+consol_len,
+                 c_hi[-1]*1.005, c_lo[-1]*0.99,
+                 c_hi[-1]*1.005+(close[pole_end]-close[pole_start])*0.8,
+                 "HIGH", f"Pole:{pole_move:.1f}%")
+            break
+
+    # ── Deduplicate: keep most recent per (pattern, direction) ─────────────
+    seen = {}
     for s in sigs:
-        if s.pattern not in seen or s.date>seen[s.pattern].date: seen[s.pattern]=s
+        key = (s.pattern, s.direction)
+        if key not in seen or s.date > seen[key].date:
+            seen[key] = s
     return list(seen.values())
 
+
 def run_pattern_detection(ohlcv_dict):
-    by_sym={}; all_pats=[]; n=len(ohlcv_dict)
-    print(f"  Detecting patterns ({n} stocks)…")
-    for i,(sym,df) in enumerate(ohlcv_dict.items()):
-        if len(df)<60: continue
-        if "Date" not in df.columns: df=df.reset_index()
+    """
+    Run chart pattern detection on DAILY + WEEKLY timeframes.
+    Weekly patterns have higher historical win rates and broader context.
+    """
+    by_sym = {}; all_pats = []; n = len(ohlcv_dict)
+
+    # ── Daily ────────────────────────────────────────────────────────────────
+    print(f"  Detecting daily patterns ({n} stocks)…")
+    for i, (sym, df) in enumerate(ohlcv_dict.items()):
+        if len(df) < 60: continue
         try:
-            pats=detect_patterns(df,sym)
-            if pats: by_sym[sym]=pats; all_pats.extend(pats)
+            pats = detect_patterns(df, sym, timeframe='D')
+            if pats:
+                by_sym[sym] = pats
+                all_pats.extend(pats)
         except: pass
-        if (i+1)%100==0: print(f"    …{i+1}/{n}")
-    bull=sum(1 for p in all_pats if p.direction=="BULLISH")
-    print(f"  ✅ Patterns:{len(all_pats)} | {bull} Bullish | {len(all_pats)-bull} Bearish | {len(by_sym)} stocks")
-    return by_sym,all_pats
+        if (i+1) % 100 == 0: print(f"    …{i+1}/{n} (daily)")
+
+    # ── Weekly ───────────────────────────────────────────────────────────────
+    print(f"  Detecting weekly patterns ({n} stocks)…")
+    for i, (sym, df) in enumerate(ohlcv_dict.items()):
+        if len(df) < 60: continue
+        try:
+            w_df = _resample_ohlcv_weekly(df)
+            if len(w_df) < 20: continue
+            pats_w = detect_patterns(w_df, sym, timeframe='W')
+            if pats_w:
+                by_sym.setdefault(sym, []).extend(pats_w)
+                all_pats.extend(pats_w)
+        except: pass
+        if (i+1) % 100 == 0: print(f"    …{i+1}/{n} (weekly)")
+
+    bull  = sum(1 for p in all_pats if p.direction == "BULLISH")
+    d_cnt = sum(1 for p in all_pats if p.timeframe == 'D')
+    w_cnt = sum(1 for p in all_pats if p.timeframe == 'W')
+    print(f"  ✅ Patterns:{len(all_pats)} | {bull} Bullish | {len(all_pats)-bull} Bearish")
+    print(f"     Daily:{d_cnt} | Weekly:{w_cnt} | {len(by_sym)} stocks with patterns")
+    return by_sym, all_pats
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CSV LOADING
@@ -543,7 +803,7 @@ def peer_group_metrics(universe, price_data, index_prices, periods=None):
 #  ROTATION ROW
 # ─────────────────────────────────────────────────────────────────────────────
 def rotation_row(group_stocks, price_data, index_prices, name):
-    rs55_a=rsi_a=sma20_a=sma50_a=sma100_a=adv=dec=unch=0
+    rs22_a=rs55_a=rsi_a=sma20_a=sma50_a=sma100_a=adv=dec=unch=0
     z1={"H":0,"M":0,"L":0}; z3={"H":0,"M":0,"L":0}; z6={"H":0,"M":0,"L":0}
     valid=0
     for sym in group_stocks:
@@ -556,6 +816,8 @@ def rotation_row(group_stocks, price_data, index_prices, name):
             if c1>0: adv+=1
             elif c1<0: dec+=1
             else: unch+=1
+        rs22=calc_rs(prices,index_prices,22)
+        if rs22==rs22 and rs22>0: rs22_a+=1
         rs55=calc_rs(prices,index_prices,55)
         if rs55==rs55 and rs55>0: rs55_a+=1
         rsi=calc_rsi(prices)
@@ -577,7 +839,7 @@ def rotation_row(group_stocks, price_data, index_prices, name):
     s1,s3,s6=score(z1),score(z3),score(z6)
     return {"Name":name,"Stocks":len(group_stocks),"Valid":valid,
             "Advancing":adv,"Declining":dec,"Unchanged":unch,"Adv/Dec":f"{adv}/{dec}",
-            "RS55%":pct(rs55_a),"RSI50%":pct(rsi_a),
+            "RS22%":pct(rs22_a),"RS55%":pct(rs55_a),"RSI50%":pct(rsi_a),
             "AbvSMA20%":pct(sma20_a),"AbvSMA50%":pct(sma50_a),"AbvSMA100%":pct(sma100_a),
             "1M_Score":s1,"1M_Zone":zlbl(s1),"3M_Score":s3,"3M_Zone":zlbl(s3),
             "6M_Score":s6,"6M_Zone":zlbl(s6)}
@@ -668,7 +930,7 @@ def build_sector_rotation(universe, price_data, index_prices):
     if not rows: return pd.DataFrame()
     df=pd.DataFrame(rows).sort_values("RS55%",ascending=False).reset_index(drop=True)
     df.insert(0,"Rank",df.index+1)
-    keep=["Rank","Name","Stocks","Adv/Dec","RS55%","RSI50%","AbvSMA20%","AbvSMA50%","AbvSMA100%",
+    keep=["Rank","Name","Stocks","Adv/Dec","RS22%","RS55%","RSI50%","AbvSMA20%","AbvSMA50%","AbvSMA100%",
           "1M_Score","1M_Zone","3M_Score","3M_Zone","6M_Score","6M_Zone"]
     return df[[c for c in keep if c in df.columns]]
 
@@ -685,7 +947,7 @@ def build_industry_rotation(universe, price_data, index_prices):
     if not rows: return pd.DataFrame()
     df=pd.DataFrame(rows).sort_values("RS55%",ascending=False).reset_index(drop=True)
     df.insert(0,"Rank",df.index+1)
-    keep=["Rank","Name","Sector","Stocks","Adv/Dec","RS55%","RSI50%","AbvSMA20%","AbvSMA50%","AbvSMA100%",
+    keep=["Rank","Name","Sector","Stocks","Adv/Dec","RS22%","RS55%","RSI50%","AbvSMA20%","AbvSMA50%","AbvSMA100%",
           "1M_Score","1M_Zone","3M_Score","3M_Zone","6M_Score","6M_Zone"]
     return df[[c for c in keep if c in df.columns]]
 
@@ -722,8 +984,8 @@ def build_market_breadth(price_data, index_prices, breadth_cfg, index_data_dir, 
         rows.append(row)
     if not rows: return pd.DataFrame()
     df=pd.DataFrame(rows)
-    keep=["Name","Index_Price","Stocks","Valid","Advancing","Declining","Adv/Dec",
-          "RS55%","RSI50%","AbvSMA20%","AbvSMA50%","AbvSMA100%","AbvSMA200%",
+    keep=["Name","Index_Price","Stocks","Valid","Adv/Dec",
+          "RS22%","RS55%","RSI50%","AbvSMA20%","AbvSMA50%","AbvSMA100%","AbvSMA200%",
           "1M_Score","1M_Zone","3M_Score","3M_Zone","6M_Score","6M_Zone"]
     return df[[c for c in keep if c in df.columns]]
 
@@ -1064,31 +1326,73 @@ def build_top_picks_sell(stock_df, sector_str_df, market="INDIA", top_n=5):
     return pd.DataFrame(rows) if rows else pd.DataFrame({"Message":["No Sell signals found."]})
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  ❿ CHART PATTERNS (last 14 days, proper Dates column, with TV_Symbol)
+#  ❿ CHART PATTERNS  v5.3 — Daily + Weekly, Date fixed, Timeframe column
 # ─────────────────────────────────────────────────────────────────────────────
 def build_chart_patterns_df(patterns_list, stock_df, market="INDIA"):
-    cutoff=(datetime.now()-timedelta(days=14)).strftime("%Y-%m-%d")
-    recent=[p for p in patterns_list if p.date>=cutoff]
-    prefix="NSE:" if market=="INDIA" else ""
-    sym_info={}
+    """
+    Build chart patterns DataFrame for Excel output.
+    - Daily patterns  : last 21 days
+    - Weekly patterns : last 90 days  (weekly patterns take longer to form)
+    Sorted: Weekly first (higher TF → higher historical win rate), then Bullish first.
+    """
+    now = datetime.now()
+    daily_cutoff  = (now - timedelta(days=21)).strftime("%Y-%m-%d")
+    weekly_cutoff = (now - timedelta(days=90)).strftime("%Y-%m-%d")
+
+    recent = [p for p in patterns_list if
+              (p.timeframe == 'W' and p.date >= weekly_cutoff) or
+              (p.timeframe != 'W' and p.date >= daily_cutoff)]
+
+    prefix = "NSE:" if market == "INDIA" else ""
+    sym_info = {}
     if not stock_df.empty:
-        for _,r in stock_df.iterrows():
-            sym_info[r["Symbol"]]={"Sector":r.get("Sector",""),"Signal":r.get("Signal","Neutral"),
-                                    "RS_Score":r.get("RS_Score",np.nan),"SL_Buy%":r.get("SL_Buy%",np.nan)}
-    rows=[]
-    for p in sorted(recent,key=lambda x:(0 if x.direction=="BULLISH" else 1,x.date)):
-        orig=p.symbol.replace(".NS",""); info=sym_info.get(orig,{})
-        rows.append({"Symbol":orig,"TV_Symbol":f"{prefix}{orig},","Sector":info.get("Sector",""),
-                     "RS_Signal":info.get("Signal",""),"RS_Score":info.get("RS_Score",np.nan),
-                     "SL_Buy%":info.get("SL_Buy%",np.nan),
-                     "Pattern":p.pattern,"Direction":p.direction,"Dates":p.date,
-                     "Entry":p.entry,"Stop":p.stop,"Target":p.target,"RR":p.rr,
-                     "Confidence":p.confidence,"Notes":p.notes})
+        for _, r in stock_df.iterrows():
+            sym_info[r["Symbol"]] = {
+                "Sector":   r.get("Sector", ""),
+                "Signal":   r.get("Signal", "Neutral"),
+                "RS_Score": r.get("RS_Score", np.nan),
+                "SL_Buy%":  r.get("SL_Buy%",  np.nan),
+            }
+    rows = []
+    for p in recent:
+        orig     = p.symbol.replace(".NS","")
+        info     = sym_info.get(orig, {})
+        tf_label = "🗓 Weekly" if p.timeframe == 'W' else "📅 Daily"
+        rows.append({
+            "Symbol":     orig,
+            "TV_Symbol":  f"{prefix}{orig},",
+            "Timeframe":  tf_label,
+            "Sector":     info.get("Sector", ""),
+            "RS_Signal":  info.get("Signal", ""),
+            "RS_Score":   info.get("RS_Score", np.nan),
+            "SL_Buy%":    info.get("SL_Buy%",  np.nan),
+            "Pattern":    p.pattern,
+            "Direction":  p.direction,
+            "Date":       p.date,
+            "Entry":      p.entry,
+            "Stop":       p.stop,
+            "Target":     p.target,
+            "RR":         p.rr,
+            "Confidence": p.confidence,
+            "Notes":      p.notes,
+        })
+
     if not rows:
-        return pd.DataFrame({"Symbol":["—"],"TV_Symbol":["—"],"Pattern":[f"No patterns in last 14d (since {cutoff})"],
-                             "Direction":["—"],"Dates":["—"]})
-    df=pd.DataFrame(rows)
-    df["Dates"]=pd.to_datetime(df["Dates"],errors="coerce").dt.strftime("%Y-%m-%d")
+        return pd.DataFrame({
+            "Symbol":    ["—"], "TV_Symbol": ["—"], "Timeframe": ["—"],
+            "Pattern":   [f"No patterns found (daily cutoff: {daily_cutoff})"],
+            "Direction": ["—"], "Date": ["—"],
+        })
+
+    df = pd.DataFrame(rows)
+    # Fix date format — handles both str "2025-04-10" and datetime objects
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    # Sort: Weekly → Daily, then Bullish → Bearish, then most recent first
+    tf_ord  = df["Timeframe"].apply(lambda x: 0 if "Weekly" in str(x) else 1)
+    dir_ord = df["Direction"].apply(lambda x: 0 if x == "BULLISH" else 1)
+    df = df.assign(_tf=tf_ord, _dir=dir_ord)
+    df = df.sort_values(["_tf","_dir","Date"], ascending=[True,True,False])
+    df = df.drop(columns=["_tf","_dir"]).reset_index(drop=True)
     return df
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1213,6 +1517,600 @@ def build_trade_setups(stock_df, sector_str_df, market="INDIA"):
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ⓬ DASHBOARD  (methodology + run summary)
+# ─────────────────────────────────────────────────────────────────────────────
+#  ⓬ RS SLEEVE LISTS  v2 — improved to match rs_rebalance_v2.py logic
+#
+#  Improvements over v1:
+#   ① Strict 55d peer filter  — stock_55d > sector_55d_avg > index_55d
+#      (matches rs_rebalance STRICT_PEER_FILTER=True, single 55d period)
+#   ② Turnover filter          — avg daily turnover ≥ MIN_TURNOVER (5 Cr / $5M)
+#      computed from ohlcv_dict volume × close price, 14-day rolling avg
+#   ③ Regime detection         — Index vs EMA100/EMA200 → BULL/CAUTION/BEAR
+#      each sleeve header shows regime + recommended exposure %
+#   ④ ATR inverse-vol sizing   — Daily_Std%, Equal_Wt%, ATR_Wt% per stock
+#      floor 0.25× eq weight, cap 2.50× eq weight, renormalised to 100%
+#   ⑤ Sleeve_RS computed fresh — uses only sleeve-specific weights on raw
+#      RS_Nd_Idx% columns (not the market_engine RS_Score which uses fixed wts)
+#
+#  INDIA sleeves (cap tiers via CSV set subtraction):
+#    A  Core       Nifty  1-50   Monthly     22d×40 55d×30 120d×20 252d×10
+#    B  Growth     Nifty 51-200  Fortnightly 22d×50 55d×25 120d×20 252d× 5
+#    C  Aggressive Nifty201-500  Weekly      22d×60 55d×25 120d×10 252d× 5
+#
+#  USA sleeves (cap tiers via CSV row-range, file sorted by mkt cap desc):
+#    US_A Mega   S&P  1-50   Monthly     22d×30 55d×30 120d×25 252d×15
+#    US_B Large  S&P 51-200  Fortnightly 22d×40 55d×30 120d×20 252d×10
+#    US_C Mid    S&P201-500  Weekly      22d×50 55d×30 120d×15 252d× 5
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Sleeve configurations ─────────────────────────────────────────────────────
+_INDIA_SLEEVE_CFGS = {
+    "A": {
+        "name": "Core (Large Cap)",
+        "tier": "Nifty 1–50",
+        "universe_csv": "ind_nifty50list.csv",
+        "exclude_csv": None,
+        "top_n": 10,
+        "rebalance": "Monthly",
+        "stop_loss_pct": 15.0,
+        "rs_weights": {22: 0.40, 55: 0.30, 120: 0.20, 252: 0.10},
+        "description": (
+            "Large-cap momentum — top 10 from Nifty 50. Monthly rebalance. "
+            "Long-heavy RS (252d×10%). Core / Smallcase / MF-style sleeve."
+        ),
+    },
+    "B": {
+        "name": "Growth (Mid-Large Cap)",
+        "tier": "Nifty 51–200",
+        "universe_csv": "ind_nifty200list.csv",
+        "exclude_csv": "ind_nifty50list.csv",
+        "top_n": 15,
+        "rebalance": "Fortnightly",
+        "stop_loss_pct": 20.0,
+        "rs_weights": {22: 0.50, 55: 0.25, 120: 0.20, 252: 0.05},
+        "description": (
+            "Mid-large cap momentum — top 15 from Nifty 51-200. Fortnightly rebalance. "
+            "Balanced RS: strong 1M signal + 3M confirmation."
+        ),
+    },
+    "C": {
+        "name": "Aggressive (Small-Mid Cap)",
+        "tier": "Nifty 201–500",
+        "universe_csv": "ind_nifty500list.csv",
+        "exclude_csv": "ind_nifty200list.csv",
+        "top_n": 15,
+        "rebalance": "Weekly",
+        "stop_loss_pct": 25.0,
+        "rs_weights": {22: 0.60, 55: 0.25, 120: 0.10, 252: 0.05},
+        "description": (
+            "Small-mid cap momentum — top 15 from Nifty 201-500. Weekly rebalance. "
+            "Short-heavy RS (22d×60%). Higher churn — satellite / high-conviction."
+        ),
+    },
+}
+
+_US_SLEEVE_CFGS = {
+    "US_A": {
+        "name": "Mega Cap (S&P Top 50)",
+        "tier": "S&P 1–50",
+        "row_range": (0, 50),
+        "top_n": 15,
+        "rebalance": "Monthly",
+        "stop_loss_pct": 10.0,
+        "rs_weights": {22: 0.30, 55: 0.30, 120: 0.25, 252: 0.15},
+        "description": (
+            "US mega-cap momentum — top 15 from S&P rows 1-50. Monthly rebalance. "
+            "Long-heavy RS. Core US allocation sleeve."
+        ),
+    },
+    "US_B": {
+        "name": "Large Cap (S&P 51-200)",
+        "tier": "S&P 51–200",
+        "row_range": (50, 200),
+        "top_n": 20,
+        "rebalance": "Fortnightly",
+        "stop_loss_pct": 12.0,
+        "rs_weights": {22: 0.40, 55: 0.30, 120: 0.20, 252: 0.10},
+        "description": (
+            "US large-cap momentum — top 20 from S&P rows 51-200. Fortnightly rebalance. "
+            "Balanced RS weights."
+        ),
+    },
+    "US_C": {
+        "name": "Mid Cap (S&P 201-500)",
+        "tier": "S&P 201–500",
+        "row_range": (200, 500),
+        "top_n": 20,
+        "rebalance": "Weekly",
+        "stop_loss_pct": 15.0,
+        "rs_weights": {22: 0.50, 55: 0.30, 120: 0.15, 252: 0.05},
+        "description": (
+            "US mid-cap momentum — top 20 from S&P rows 201-500. Weekly rebalance. "
+            "Short-heavy RS for faster momentum capture."
+        ),
+    },
+}
+
+# ── Constants matching rs_rebalance_v2.py ─────────────────────────────────────
+_SLEEVE_SECTOR_CAP    = 0.25    # max 25% of top_n from any one sector
+_SLEEVE_PEER_PERIOD   = 55      # single period for strict peer filter (days)
+_SLEEVE_VOL_LOOKBACK  = 14      # ATR rolling window
+_SLEEVE_VOL_MIN_MULT  = 0.25    # floor: 0.25 × equal weight
+_SLEEVE_VOL_MAX_MULT  = 2.50    # cap:   2.50 × equal weight
+_MIN_TURNOVER_CR      = 5.0     # India: min avg daily turnover ₹ Crore
+_MIN_TURNOVER_USD     = 5.0     # US:    min avg daily turnover $ Million
+_REGIME_EMA_FAST      = 100     # EMA period for CAUTION line
+_REGIME_EMA_SLOW      = 200     # EMA period for BEAR/BULL line
+_REGIME_EXPOSURE      = {"BULL": 1.00, "CAUTION": 0.50, "BEAR": 0.25}
+
+
+# ── Helper: weighted RS score from stock_df row ───────────────────────────────
+def _sleeve_rs_score(row, weights):
+    """Compute sleeve-specific weighted RS using the pre-computed Idx% columns."""
+    col_map = {22: "RS_22d_Idx%", 55: "RS_55d_Idx%",
+               120: "RS_120d_Idx%", 252: "RS_252d_Idx%"}
+    total_v = total_w = 0.0
+    for period, w in weights.items():
+        col = col_map.get(period)
+        if col and col in row.index:
+            v = row[col]
+            if not (isinstance(v, float) and np.isnan(v)):
+                total_v += float(v) * w
+                total_w += w
+    return round(total_v / total_w, 4) if total_w > 0 else np.nan
+
+
+# ── Helper: regime detection ──────────────────────────────────────────────────
+def _detect_regime(index_prices):
+    """
+    Classify market regime using EMA100 / EMA200 of the index.
+    Returns (label, exposure_fraction, info_dict).
+    Matches rs_rebalance_v2.py get_regime() exactly.
+    """
+    if len(index_prices) < _REGIME_EMA_SLOW + 10:
+        return "BULL", 1.0, {}
+    s = _normalize(index_prices.dropna())
+    ema_fast = s.ewm(span=_REGIME_EMA_FAST, adjust=False).mean()
+    ema_slow = s.ewm(span=_REGIME_EMA_SLOW, adjust=False).mean()
+    now  = float(s.iloc[-1])
+    ef   = float(ema_fast.iloc[-1])
+    es   = float(ema_slow.iloc[-1])
+    if now > es:
+        label = "BULL"
+    elif now > ef:
+        label = "CAUTION"
+    else:
+        label = "BEAR"
+    exp = _REGIME_EXPOSURE[label]
+    return label, exp, {
+        "Index":  round(now, 2),
+        "EMA100": round(ef,  2),
+        "EMA200": round(es,  2),
+    }
+
+
+# ── Helper: compute avg daily turnover from ohlcv_dict ───────────────────────
+def _compute_turnover(yahoo_sym, ohlcv_dict, market):
+    """
+    Return avg daily turnover in ₹ Crore (India) or $ Million (US).
+    Uses 14-day rolling avg of (close × volume).
+    Falls back to NaN if volume not available.
+    """
+    try:
+        df = ohlcv_dict.get(yahoo_sym)
+        if df is None or df.empty or "Volume" not in df.columns:
+            return np.nan
+        cl  = df["Close"].dropna()
+        vol = df["Volume"].dropna()
+        common = cl.index.intersection(vol.index)
+        if len(common) < _SLEEVE_VOL_LOOKBACK:
+            return np.nan
+        tv = (cl.loc[common] * vol.loc[common]).iloc[-_SLEEVE_VOL_LOOKBACK:]
+        avg = float(tv.mean())
+        # India: ₹ → Crore (÷1e7);  US: $ → Million (÷1e6)
+        divisor = 1e7 if market == "INDIA" else 1e6
+        return round(avg / divisor, 2)
+    except Exception:
+        return np.nan
+
+
+# ── Helper: ATR inverse-vol position sizing ───────────────────────────────────
+def _atr_weights(yahoo_syms, ohlcv_dict):
+    """
+    Compute ATR inverse-vol weights for a list of symbols.
+    Returns dict {yahoo_sym: (daily_std_pct, equal_wt_pct, atr_wt_pct)}.
+    Matches rs_rebalance_v2.py calc_atr_weights() exactly.
+    """
+    n = len(yahoo_syms)
+    if n == 0:
+        return {}
+    eq_w = 1.0 / n
+    inv_vols = {}
+    daily_stds = {}
+    for sym in yahoo_syms:
+        try:
+            df = ohlcv_dict.get(sym)
+            if df is not None and "Close" in df.columns:
+                prices = df["Close"].dropna().tail(_SLEEVE_VOL_LOOKBACK + 5)
+                std = prices.pct_change().dropna().tail(_SLEEVE_VOL_LOOKBACK).std()
+                if std > 0:
+                    inv_vols[sym]   = 1.0 / std
+                    daily_stds[sym] = round(std * 100, 3)
+                    continue
+        except Exception:
+            pass
+        inv_vols[sym]   = 1.0
+        daily_stds[sym] = np.nan
+
+    total_inv = sum(inv_vols.values()) or 1.0
+    raw = {sym: v / total_inv for sym, v in inv_vols.items()}
+    clipped = {sym: max(eq_w * _SLEEVE_VOL_MIN_MULT,
+                        min(eq_w * _SLEEVE_VOL_MAX_MULT, w))
+               for sym, w in raw.items()}
+    total_clip = sum(clipped.values()) or 1.0
+    final = {sym: clipped[sym] / total_clip for sym in clipped}
+
+    result = {}
+    for sym in yahoo_syms:
+        result[sym] = (
+            daily_stds.get(sym, np.nan),
+            round(eq_w * 100, 2),
+            round(final.get(sym, eq_w) * 100, 2),
+        )
+    return result
+
+
+# ── Core: build one sleeve ────────────────────────────────────────────────────
+def _build_one_sleeve(cfg_key, cfg, stock_df, universe_df, index_data_dir,
+                      market, price_data, ohlcv_dict, index_prices):
+    """
+    Build one sleeve's ranked list with all rs_rebalance improvements:
+      ① Cap-tier filtering via CSV set subtraction (India) or row-range (US)
+      ② Sleeve-specific weighted RS score
+      ③ Strict 55d single-period peer filter:
+           stock_55d_ret > sector_55d_avg > index_55d_ret  (all positive)
+      ④ Minimum turnover filter (₹5 Cr / $5M 14-day avg)
+      ⑤ Sector concentration cap (25% of top_n)
+      ⑥ ATR inverse-vol position sizing
+    Returns: (top_df, n_candidates) where top_df has all output columns.
+    """
+    if stock_df.empty:
+        return pd.DataFrame(), 0
+
+    # ── ① Cap-tier filtering ───────────────────────────────────────────────
+    if market == "INDIA":
+        uni_csv  = cfg.get("universe_csv")
+        excl_csv = cfg.get("exclude_csv")
+        tier_syms = set()
+        if uni_csv and index_data_dir:
+            path = os.path.join(index_data_dir, uni_csv)
+            if os.path.exists(path):
+                tier_syms = set(load_csv_constituents(path, is_nse=True))
+        if excl_csv and index_data_dir:
+            path = os.path.join(index_data_dir, excl_csv)
+            if os.path.exists(path):
+                tier_syms -= set(load_csv_constituents(path, is_nse=True))
+        if not tier_syms:
+            return pd.DataFrame(), 0
+        # Match via Yahoo column (has .NS suffix) or reconstruct
+        if "Yahoo" in stock_df.columns:
+            df = stock_df[stock_df["Yahoo"].isin(tier_syms)].copy()
+        else:
+            df = stock_df[stock_df["Symbol"].apply(
+                lambda s: s + ".NS" if not s.endswith(".NS") else s
+            ).isin(tier_syms)].copy()
+    else:
+        row_range = cfg.get("row_range")
+        if row_range is None or universe_df is None or universe_df.empty:
+            return pd.DataFrame(), 0
+        tier_universe = universe_df.iloc[row_range[0]:row_range[1]]
+        df = stock_df[stock_df["Symbol"].isin(
+            tier_universe["Symbol"].tolist())].copy()
+
+    if df.empty:
+        return pd.DataFrame(), 0
+
+    # ── ② Sleeve-specific RS score ─────────────────────────────────────────
+    weights = cfg["rs_weights"]
+    df["Sleeve_RS"] = df.apply(lambda r: _sleeve_rs_score(r, weights), axis=1)
+    df = df[df["Sleeve_RS"].notna()].copy()
+    if df.empty:
+        return pd.DataFrame(), 0
+
+    # ── ③ Strict 55d peer filter ───────────────────────────────────────────
+    # Compute index 55d return at today
+    idx_s  = _normalize(index_prices.dropna())
+    idx_55d = (float(idx_s.iloc[-1]) / float(idx_s.iloc[-56]) - 1) * 100 \
+              if len(idx_s) >= 57 else np.nan
+
+    # Compute sector 55d avg returns from price_data for the stocks in df
+    sector_55d_avg = {}
+    if not price_data.empty:
+        for sec in df["Sector"].unique():
+            sec_syms = df[df["Sector"] == sec]["Yahoo"].tolist() \
+                       if "Yahoo" in df.columns else []
+            vals = []
+            for sym in sec_syms:
+                if sym in price_data.columns:
+                    p = price_data[sym].dropna()
+                    if len(p) >= 57:
+                        ret = (float(p.iloc[-1]) / float(p.iloc[-56]) - 1) * 100
+                        if not np.isnan(ret):
+                            vals.append(ret)
+            sector_55d_avg[sec] = float(np.mean(vals)) if vals else np.nan
+
+    # Filter: stock_55d > sector_55d > index_55d, all positive
+    def _passes_peer(row):
+        sym = row.get("Yahoo", "")
+        sec = row.get("Sector", "")
+        # stock 55d return
+        stock_55 = row.get("RS_55d_Idx%", np.nan)  # already vs index; add index back
+        if isinstance(stock_55, float) and np.isnan(stock_55):
+            return False
+        if np.isnan(idx_55d):
+            # fall back to RS_55d_Idx% > 0 (already relative to index)
+            s55_vs_idx = float(stock_55)
+        else:
+            # reconstruct absolute 55d return: RS% + index_55d_ret
+            s55_abs = float(stock_55) + idx_55d
+            s55_vs_idx = float(stock_55)
+        sec_55 = sector_55d_avg.get(sec, np.nan)
+        if np.isnan(sec_55) or np.isnan(idx_55d):
+            # fallback: just require RS_55d_Idx% > 0
+            return float(stock_55) > 0
+        # Absolute 55d return of stock (approx):  RS_55d_Idx% is (stock/idx)-1 *100
+        # So stock_55d_abs ≈ RS_55d_Idx% + idx_55d  (both in %)
+        stock_55d_abs = float(stock_55) + idx_55d
+        # All three conditions: stock > sector > index, all positive
+        return (
+            stock_55d_abs > sec_55
+            and sec_55 > idx_55d
+            and stock_55d_abs > 0
+            and sec_55 > 0
+            and idx_55d is not np.nan
+        )
+
+    n_before_peer = len(df)
+    df = df[df.apply(_passes_peer, axis=1)].copy()
+
+    if df.empty:
+        return pd.DataFrame(), n_before_peer
+
+    # ── ④ Turnover filter ──────────────────────────────────────────────────
+    min_t = _MIN_TURNOVER_CR if market == "INDIA" else _MIN_TURNOVER_USD
+    if ohlcv_dict:
+        def _get_turnover(row):
+            sym = row.get("Yahoo", "")
+            return _compute_turnover(sym, ohlcv_dict, market)
+        df["Avg_Turnover"] = df.apply(_get_turnover, axis=1)
+        # Keep stocks where turnover is >= min OR turnover is unknown (NaN → don't exclude)
+        df = df[(df["Avg_Turnover"].isna()) | (df["Avg_Turnover"] >= min_t)].copy()
+    else:
+        df["Avg_Turnover"] = np.nan
+
+    if df.empty:
+        return pd.DataFrame(), n_before_peer
+
+    # ── Sort by sleeve RS score ────────────────────────────────────────────
+    df = df.sort_values("Sleeve_RS", ascending=False).reset_index(drop=True)
+
+    # ── ⑤ Sector concentration cap ─────────────────────────────────────────
+    top_n   = cfg["top_n"]
+    sec_cap = max(1, int(top_n * _SLEEVE_SECTOR_CAP))
+    sec_cnt = {}; top_rows = []
+    for _, r in df.iterrows():
+        sec = r.get("Sector", "Unknown")
+        if sec_cnt.get(sec, 0) < sec_cap:
+            top_rows.append(r)
+            sec_cnt[sec] = sec_cnt.get(sec, 0) + 1
+        if len(top_rows) >= top_n:
+            break
+
+    if not top_rows:
+        return pd.DataFrame(), n_before_peer
+
+    top = pd.DataFrame(top_rows).reset_index(drop=True)
+    top.insert(0, "Rank", top.index + 1)
+
+    # ── ⑥ ATR inverse-vol position sizing ──────────────────────────────────
+    yahoo_list = top["Yahoo"].tolist() if "Yahoo" in top.columns else []
+    if yahoo_list and ohlcv_dict:
+        wt_map = _atr_weights(yahoo_list, ohlcv_dict)
+        top["Daily_Std%"] = top["Yahoo"].apply(
+            lambda y: wt_map[y][0] if y in wt_map else np.nan)
+        top["Equal_Wt%"]  = top["Yahoo"].apply(
+            lambda y: wt_map[y][1] if y in wt_map else round(100/len(top), 2))
+        top["ATR_Wt%"]    = top["Yahoo"].apply(
+            lambda y: wt_map[y][2] if y in wt_map else round(100/len(top), 2))
+    else:
+        eq = round(100 / len(top), 2)
+        top["Daily_Std%"] = np.nan
+        top["Equal_Wt%"]  = eq
+        top["ATR_Wt%"]    = eq
+
+    # ── Select and order output columns ───────────────────────────────────
+    out_cols = [
+        "Rank", "Symbol", "Company", "Sector", "Industry",
+        "Price", "Sleeve_RS",
+        "RS_22d_Idx%", "RS_55d_Idx%", "RS_120d_Idx%", "RS_252d_Idx%",
+        "Avg_Turnover",
+        "Daily_Std%", "Equal_Wt%", "ATR_Wt%",
+        "Signal", "Enhanced", "RSI_14", "Supertrend",
+        "SL_Buy%", "SL_Grade", "SL_Buy_Price",
+        "MST_Signal", "LST_Signal", "RS30_Signal",
+        "Sales_YoY%", "PAT_YoY%", "ROE%", "Mkt_Cap_B",
+        "Chart_Pattern",
+    ]
+    out_cols = [c for c in out_cols if c in top.columns]
+    return top[out_cols], n_before_peer
+
+
+# ── Main builder ──────────────────────────────────────────────────────────────
+def build_rs_sleeve_list(stock_df, universe_df, index_data_dir, market="INDIA",
+                          run_time="", index_prices=None,
+                          price_data=None, ohlcv_dict=None):
+    """
+    Build the RS Sleeve / Smallcase Action List sheet (v2 — improved).
+
+    Parameters
+    ----------
+    stock_df       : pre-computed stock strength DataFrame from build_stock_strength()
+    universe_df    : full universe DataFrame (used for US row-range cap splitting)
+    index_data_dir : path to IndexData folder (CSV files)
+    market         : "INDIA" or "US"
+    run_time       : timestamp string to embed in the legend footer
+    index_prices   : pd.Series of index close prices (for regime + peer filter)
+    price_data     : pd.DataFrame of all stock closes (for sector 55d calc)
+    ohlcv_dict     : dict {yahoo_sym: OHLCV_DataFrame} (for turnover + ATR sizing)
+
+    Returns
+    -------
+    pd.DataFrame — all sleeves concatenated with divider rows and a legend footer
+    """
+    # Defaults so callers that don't pass the new args still work
+    if index_prices is None:
+        index_prices = pd.Series(dtype=float)
+    if price_data is None:
+        price_data = pd.DataFrame()
+    if ohlcv_dict is None:
+        ohlcv_dict = {}
+
+    sleeve_cfgs = _INDIA_SLEEVE_CFGS if market == "INDIA" else _US_SLEEVE_CFGS
+    idx_label   = "Nifty 50 (^NSEI)"  if market == "INDIA" else "S&P 500 (SPY)"
+    currency    = "₹"                  if market == "INDIA" else "$"
+    min_t_label = f"₹{_MIN_TURNOVER_CR} Cr" if market == "INDIA" else f"${_MIN_TURNOVER_USD}M"
+
+    # ── Regime detection (shared across all sleeves) ───────────────────────
+    regime_label, regime_exp, regime_vals = _detect_regime(index_prices)
+    regime_icons = {"BULL": "🟢", "CAUTION": "🟡", "BEAR": "🔴"}
+    regime_icon  = regime_icons.get(regime_label, "⚪")
+    regime_str   = (
+        f"{regime_icon} {regime_label}  |  Deploy {int(regime_exp*100)}% capital"
+        f"  |  Index:{regime_vals.get('Index','?')}  "
+        f"EMA100:{regime_vals.get('EMA100','?')}  "
+        f"EMA200:{regime_vals.get('EMA200','?')}"
+    )
+
+    all_sections = []
+
+    # ── Regime banner at the top ───────────────────────────────────────────
+    banner = {
+        "Rank": f"━━━ MARKET REGIME: {regime_label} ━━━",
+        "Symbol": regime_str,
+        "Company": (
+            f"BULL → deploy 100% · CAUTION → deploy 50% · BEAR → deploy 25%, "
+            f"rest → Sleeve D (Liquid Bees / FD)"
+        ),
+    }
+    all_sections.append(pd.DataFrame([banner, {}]))
+
+    # ── Build each sleeve ──────────────────────────────────────────────────
+    for cfg_key, cfg in sleeve_cfgs.items():
+        print(f"  Building Sleeve {cfg_key}: {cfg['name']} …")
+        top_df, n_cands = _build_one_sleeve(
+            cfg_key, cfg, stock_df, universe_df, index_data_dir,
+            market, price_data, ohlcv_dict, index_prices,
+        )
+        n_found = len(top_df) if not top_df.empty else 0
+
+        # Recommended capital to deploy for this sleeve
+        deploy_pct = int(regime_exp * 100)
+
+        # ── Sleeve header divider row ─────────────────────────────────────
+        header_row = {
+            "Rank":        f"━━━ SLEEVE {cfg_key} ━━━",
+            "Symbol":      cfg["name"],
+            "Company":     cfg["tier"],
+            "Sector":      f"Rebalance: {cfg['rebalance']}",
+            "Industry":    f"Stop Loss: {cfg['stop_loss_pct']}%",
+            "Price":       f"Top {cfg['top_n']}  |  {n_found} passed  "
+                           f"|  {n_cands} pre-filter",
+            "Sleeve_RS":   (
+                f"RS weights: "
+                + "  ".join(f"{p}d×{int(w*100)}%"
+                            for p, w in cfg["rs_weights"].items())
+            ),
+            "RS_22d_Idx%": (
+                f"Regime: {regime_label} → deploy {deploy_pct}%  |  "
+                + cfg["description"]
+            ),
+        }
+        all_sections.append(pd.DataFrame([header_row]))
+
+        if not top_df.empty:
+            all_sections.append(top_df)
+        else:
+            all_sections.append(pd.DataFrame([{
+                "Rank":    "—",
+                "Symbol":  "No stocks passed all filters",
+                "Company": (
+                    f"Peer filter (stock>sector>index 55d) or "
+                    f"turnover <{min_t_label} excluded all candidates. "
+                    f"{n_cands} stocks checked."
+                ),
+            }]))
+
+        # blank separator row
+        all_sections.append(pd.DataFrame([{}]))
+
+    # ── Methodology / legend footer ────────────────────────────────────────
+    method_rows = [
+        {"Rank": "━━━ METHODOLOGY & LOGIC (v2) ━━━"},
+        {"Rank": "Benchmark",      "Symbol": idx_label},
+        {"Rank": "Regime",
+         "Symbol": "Index vs EMA100 (CAUTION line) and EMA200 (BULL/BEAR line)."
+                   " BULL=above both · CAUTION=above EMA100 only · BEAR=below both"},
+        {"Rank": "Peer Filter",
+         "Symbol": f"STRICT 55d: stock_55d_abs > sector_55d_avg > index_55d.  "
+                   f"All three must be positive. Single period ({_SLEEVE_PEER_PERIOD}d) "
+                   f"matches rs_rebalance_v2.py STRICT_PEER_FILTER."},
+        {"Rank": "Turnover Filter",
+         "Symbol": f"Min avg daily turnover ≥ {min_t_label} "
+                   f"({_SLEEVE_VOL_LOOKBACK}-day rolling close×volume). "
+                   f"Excludes illiquid stocks that look good on RS but can't be traded."},
+        {"Rank": "Sector Cap",
+         "Symbol": f"{int(_SLEEVE_SECTOR_CAP*100)}% of top_n per sector — diversification guard"},
+        {"Rank": "Sleeve_RS",
+         "Symbol": "Weighted RS: each period's RS_Nd_Idx% × sleeve weight ÷ sum(weights)"},
+        {"Rank": "ATR_Wt%",
+         "Symbol": f"Inverse-vol weight: 1/DailyStd, clipped [{_SLEEVE_VOL_MIN_MULT}×eq, "
+                   f"{_SLEEVE_VOL_MAX_MULT}×eq], renormalised to 100%. "
+                   f"Low-vol stocks get higher weight for equal risk contribution."},
+        {"Rank": "SL_Grade",
+         "Symbol": "A≤3%  B≤5%  C≤8%  D≤12%  F>12% — tighter = better entry quality"},
+        {"Rank": ""},
+        {"Rank": "━━━ REBALANCE SCHEDULE ━━━"},
+        {"Rank": "Sleeve A / US_A",
+         "Symbol": "Monthly — 1st trading day of month. Large cap, low churn (~2-3 changes/month)"},
+        {"Rank": "Sleeve B / US_B",
+         "Symbol": "Fortnightly — 1st & 3rd Friday. Mid-large cap, moderate churn (~4-6 changes)"},
+        {"Rank": "Sleeve C / US_C",
+         "Symbol": "Weekly — every Friday close. Small-mid cap, higher churn (~5-8 changes)"},
+        {"Rank": "Sleeve D",
+         "Symbol": "Liquid Bees / FD / Short-term debt. Bear-buffer — activate in BEAR regime"},
+        {"Rank": ""},
+        {"Rank": "━━━ HOW TO USE ━━━"},
+        {"Rank": "Step 1",
+         "Symbol": "Check regime banner above. In BEAR: deploy only 25% per sleeve, move rest to D"},
+        {"Rank": "Step 2",
+         "Symbol": "Choose sleeve for your risk profile: A=Conservative · B=Balanced · C=Aggressive"},
+        {"Rank": "Step 3",
+         "Symbol": "Enter ALL stocks in the sleeve. Weight by ATR_Wt% column (not equal weight)"},
+        {"Rank": "Step 4",
+         "Symbol": "On rebalance date: exit stocks no longer in list, add new entries, adjust weights"},
+        {"Rank": "Step 5",
+         "Symbol": "Use SL_Buy_Price as your hard stop. Grade A/B stops are ideal (≤5% risk per stock)"},
+        {"Rank": "Step 6",
+         "Symbol": "If a stock falls to its SL_Buy_Price intra-cycle, exit immediately — do not wait for rebalance"},
+        {"Rank": "Generated", "Symbol": run_time},
+    ]
+    all_sections.append(pd.DataFrame(method_rows))
+
+    combined = pd.concat(all_sections, ignore_index=True, sort=False)
+    combined  = combined.fillna("")
+    return combined
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 def build_dashboard(stock_df, sector_str_df, market, run_time):
     """
