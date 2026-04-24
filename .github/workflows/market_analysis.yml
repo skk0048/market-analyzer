@@ -15,7 +15,7 @@
 #  REQUIRED GITHUB SECRETS:
 #    GOOGLE_CREDENTIALS        — service account JSON content
 #    GOOGLE_SHEET_URL          — India sheet URL
-#    GOOGLE_SHEET_URL_USA      — US sheet URL
+#    GOOGLE_SHEET_URL_US       — US sheet URL   ← NOTE: _US not _USA
 #    GOOGLE_SHEET_URL_SCANS    — Scans sheet URL (LongTerm, FnO, etc. tabs)
 #
 #  TO ADD A NEW SCAN (e.g. Breakout.py):
@@ -30,9 +30,10 @@ on:
   schedule:
     - cron: "30 4 * * 1-5"    # India  Run 1 → 04:30 UTC = 10:00 AM IST
     - cron: "0 9 * * 1-5"     # India  Run 2 → 09:00 UTC = 02:30 PM IST
+    - cron: "30 11 * * 1-5"   # India  Run 3 → 11:30 UTC = 05:00 PM IST  ← ADDED (was missing)
     - cron: "30 21 * * 1-5"   # USA    Run 1 → 21:30 UTC = 03:00 AM IST next day
-    - cron: "29 5 * * 1-5"     # Scans  Run 1 → 05:00 UTC = 10:30 AM IST
-    - cron: "1 9 * * 1-5"    # Scans  Run 2 → 12:00 UTC = 05:30 PM IST
+    - cron: "0 5 * * 1-5"     # Scans  Run 1 → 05:00 UTC = 10:30 AM IST  ← FIXED (was "29 5")
+    - cron: "0 12 * * 1-5"    # Scans  Run 2 → 12:00 UTC = 05:30 PM IST  ← FIXED (was "1 9")
   workflow_dispatch:
     inputs:
       market:
@@ -106,7 +107,7 @@ jobs:
       - name: Run USA analysis
         env:
           GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
-          GOOGLE_SHEET_URL_USA: ${{ secrets.GOOGLE_SHEET_URL_USA }}
+          GOOGLE_SHEET_URL_US: ${{ secrets.GOOGLE_SHEET_URL_US }}   # ← FIXED: _US not _USA
         run: python market_usa_gsht.py
       - name: Remove credentials
         if: always()
