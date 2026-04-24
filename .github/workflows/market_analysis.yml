@@ -107,7 +107,7 @@ jobs:
       - name: Run USA analysis
         env:
           GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
-          GOOGLE_SHEET_URL_US: ${{ secrets.GOOGLE_SHEET_URL_US }}   # ← FIXED: _US not _USA
+          GOOGLE_SHEET_URL_USA: ${{ secrets.GOOGLE_SHEET_URL_USA }}   # ← FIXED: _US not _USA
         run: python market_usa_gsht.py
       - name: Remove credentials
         if: always()
