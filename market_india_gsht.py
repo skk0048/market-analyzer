@@ -122,8 +122,9 @@ def _get_ws(ss, title, rows=3000, cols=60):
 
 
 @tenacity.retry(
-    wait=tenacity.wait_exponential(multiplier=1, min=3, max=60),
-    stop=tenacity.stop_after_attempt(5),
+    wait=tenacity.wait_exponential(multiplier=2, min=5, max=120)
+    + tenacity.wait_random(0, 3),
+    stop=tenacity.stop_after_attempt(7),
     retry=tenacity.retry_if_exception_type(
         (gspread.exceptions.APIError, ConnectionError)
     ),
@@ -223,9 +224,9 @@ def write_tab(ss, title, df, hdr_bg="navy", skip_cols=None):
     ws = _get_ws(ss, title, rows=max(nr + 50, 500), cols=max(nc + 5, 30))
 
     _api(ws.clear)
-    time.sleep(0.5)
+    time.sleep(1.5)
     _api(set_with_dataframe, ws, df_out, resize=True)
-    time.sleep(0.5)
+    time.sleep(1.5)
 
     # ── Text columns that should be left-aligned ───────────────────────────
     _LEFT_COLS = {
@@ -247,7 +248,7 @@ def write_tab(ss, title, df, hdr_bg="navy", skip_cols=None):
             "horizontalAlignment": "CENTER",
             "verticalAlignment": "MIDDLE",
         })
-        time.sleep(0.3)
+        time.sleep(1.0)
         # Freeze row 1
         _api(ss.batch_update, {"requests": [{
             "updateSheetProperties": {
@@ -258,7 +259,7 @@ def write_tab(ss, title, df, hdr_bg="navy", skip_cols=None):
                 "fields": "gridProperties.frozenRowCount",
             }
         }]})
-        time.sleep(0.2)
+        time.sleep(0.8)
         # Left-align text columns (batch by column)
         align_reqs = []
         for ci, col in enumerate(df_out.columns, 1):
@@ -272,7 +273,7 @@ def write_tab(ss, title, df, hdr_bg="navy", skip_cols=None):
         for i in range(0, len(align_reqs), 30):
             try:
                 _api(ws.batch_format, align_reqs[i:i+30])
-                time.sleep(0.2)
+                time.sleep(0.8)
             except Exception:
                 pass
     except Exception:
@@ -290,11 +291,11 @@ def write_tab(ss, title, df, hdr_bg="navy", skip_cols=None):
     for i in range(0, len(cell_fmts), 60):
         try:
             _api(ws.batch_format, cell_fmts[i:i + 60])
-            time.sleep(0.2)
+            time.sleep(0.8)
         except Exception:
             pass
 
-    time.sleep(0.8)
+    time.sleep(3.0)
     print(f"    ✓ '{title}' — {len(df_out)} rows × {len(df_out.columns)} cols")
 
 
@@ -309,7 +310,7 @@ def write_dashboard_tab(ss, dash_df, market):
 
     clean = dash_df.copy().fillna("").astype(str)
     _api(set_with_dataframe, ws, clean, resize=True)
-    time.sleep(0.5)
+    time.sleep(1.5)
 
     # Format header row
     try:
@@ -342,8 +343,8 @@ def write_sleeve_tab(ss, sleeve_df, market="INDIA"):
 
     nr, nc = len(df_out) + 1, len(df_out.columns)
     ws = _get_ws(ss, title, rows=max(nr + 50, 300), cols=max(nc + 5, 30))
-    _api(ws.clear); time.sleep(0.5)
-    _api(set_with_dataframe, ws, df_out, resize=True); time.sleep(0.5)
+    _api(ws.clear); time.sleep(1.5)
+    _api(set_with_dataframe, ws, df_out, resize=True); time.sleep(1.5)
 
     # Header row formatting
     try:
@@ -354,7 +355,7 @@ def write_sleeve_tab(ss, sleeve_df, market="INDIA"):
                            "bold": True, "fontSize": 10},
             "horizontalAlignment": "CENTER",
         })
-        time.sleep(0.3)
+        time.sleep(1.0)
         # Freeze row 1
         _api(ss.batch_update, {"requests": [{
             "updateSheetProperties": {
@@ -428,7 +429,7 @@ def write_sleeve_tab(ss, sleeve_df, market="INDIA"):
 
     for i in range(0, len(row_fmts), 30):
         try:
-            _api(ws.batch_format, row_fmts[i:i+30]); time.sleep(0.3)
+            _api(ws.batch_format, row_fmts[i:i+30]); time.sleep(1.0)
         except Exception:
             pass
 
@@ -443,7 +444,7 @@ def write_sleeve_tab(ss, sleeve_df, market="INDIA"):
                                    "format": {"backgroundColor": bg}})
     for i in range(0, len(cell_fmts), 60):
         try:
-            _api(ws.batch_format, cell_fmts[i:i+60]); time.sleep(0.2)
+            _api(ws.batch_format, cell_fmts[i:i+60]); time.sleep(0.8)
         except Exception:
             pass
 
@@ -622,19 +623,21 @@ def main():
     dashboard_df = build_dashboard_df(stock_df, sec_str_df, "INDIA", run_time)
 
     # ── Write to Google Sheets ────────────────────────────────────────────────
+    # Inter-tab sleep (TAB_DELAY) prevents 429 quota exhaustion across 13 tabs.
+    TAB_DELAY = 8  # seconds between tab writes
     print("\n📊 Writing to Google Sheets …")
-    write_dashboard_tab(ss, dashboard_df, "INDIA")
-    write_tab(ss, "📸 Market Snapshot",   snap_df,     "navy")
-    write_tab(ss, "🏭 Sector Strength",    sec_str_df,  "teal")
-    write_tab(ss, "🔄 Sector Rotation",    sec_rot_df,  "navy")
-    write_tab(ss, "🏭 Industry Rotation",  ind_rot_df,  "navy")
-    write_tab(ss, "📊 Market Breadth",     breadth_df,  "green")
-    write_tab(ss, "📈 Sector Performance", sec_perf_df, "navy")
-    write_tab(ss, "📊 Stock Strength",     stock_df,    "navy")
-    write_tab(ss, "🏆 Top Picks - Buy",    top_buy_df,  "green")
-    write_tab(ss, "🔴 Top Picks - Sell",   top_sell_df, "red")
-    write_tab(ss, "📐 Chart Patterns",     chart_df,    "navy")
-    write_tab(ss, "🎯 Trade Setups",       trade_df,    "navy")
+    write_dashboard_tab(ss, dashboard_df, "INDIA");            time.sleep(TAB_DELAY)
+    write_tab(ss, "📸 Market Snapshot",   snap_df,     "navy"); time.sleep(TAB_DELAY)
+    write_tab(ss, "🏭 Sector Strength",    sec_str_df,  "teal"); time.sleep(TAB_DELAY)
+    write_tab(ss, "🔄 Sector Rotation",    sec_rot_df,  "navy"); time.sleep(TAB_DELAY)
+    write_tab(ss, "🏭 Industry Rotation",  ind_rot_df,  "navy"); time.sleep(TAB_DELAY)
+    write_tab(ss, "📊 Market Breadth",     breadth_df,  "green"); time.sleep(TAB_DELAY)
+    write_tab(ss, "📈 Sector Performance", sec_perf_df, "navy"); time.sleep(TAB_DELAY)
+    write_tab(ss, "📊 Stock Strength",     stock_df,    "navy"); time.sleep(TAB_DELAY)
+    write_tab(ss, "🏆 Top Picks - Buy",    top_buy_df,  "green"); time.sleep(TAB_DELAY)
+    write_tab(ss, "🔴 Top Picks - Sell",   top_sell_df, "red");   time.sleep(TAB_DELAY)
+    write_tab(ss, "📐 Chart Patterns",     chart_df,    "navy"); time.sleep(TAB_DELAY)
+    write_tab(ss, "🎯 Trade Setups",       trade_df,    "navy"); time.sleep(TAB_DELAY)
     write_sleeve_tab(ss, sleeve_df, "INDIA")
 
     elapsed = time.time() - t0
