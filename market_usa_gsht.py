@@ -609,8 +609,7 @@ def main():
                                           stock_df, sec_str_df, market="US",
                                           primary_rs=PRIMARY_RS_PERIOD)
     print("📐 Chart Patterns …");     chart_df    = build_chart_patterns_df(
-                                          patterns_list, stock_df, market="US",
-                                          primary_rs=PRIMARY_RS_PERIOD)
+                                          patterns_list, stock_df, market="US")
     print("🎯 Trade Setups …");       trade_df    = build_trade_setups(
                                           stock_df, sec_str_df, market="US",
                                           primary_rs=PRIMARY_RS_PERIOD)
