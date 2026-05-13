@@ -54,6 +54,10 @@ PATTERN_MAX       = 400
 FETCH_FINANCIALS  = True   # always True in cloud — no cache
 ENABLE_SIGNALS    = True
 SIGNAL_MAX_STOCKS = 400
+# ── Primary RS period for sector ranking & rotation ──────────────────────────
+# Options: 22, 55, 120  (120 only works in Strength, not Rotation)
+# Change this one number to switch which RS period drives all sector decisions.
+PRIMARY_RS_PERIOD = 22   # ← change to 55 or 120 to test other RS periods
 
 # ── Google Sheets auth ────────────────────────────────────────────────────────
 CREDENTIALS_PATH = (
@@ -82,6 +86,7 @@ from market_engine import (
     build_sector_performance, build_stock_strength, build_top_picks_buy,
     build_top_picks_sell, build_chart_patterns_df, build_trade_setups,
     run_pattern_detection, build_rs_sleeve_list,
+    build_country_etf_df, build_commodity_df,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -575,11 +580,14 @@ def main():
 
     print("\n📸 Market Snapshot …");   snap_df     = build_market_snapshot("US")
     print("🏭 Sector Strength …");    sec_str_df  = build_sector_strength(
-                                          universe, price_data, index_prices, sector_prices)
+                                          universe, price_data, index_prices, sector_prices,
+                                          primary_rs=PRIMARY_RS_PERIOD)
     print("🔄 Sector Rotation …");    sec_rot_df  = build_sector_rotation(
-                                          universe, price_data, index_prices)
+                                          universe, price_data, index_prices,
+                                          primary_rs=PRIMARY_RS_PERIOD)
     print("🏭 Industry Rotation …");  ind_rot_df  = build_industry_rotation(
-                                          universe, price_data, index_prices)
+                                          universe, price_data, index_prices,
+                                          primary_rs=PRIMARY_RS_PERIOD)
     print("📊 Market Breadth …");     breadth_df  = build_market_breadth(
                                           price_data, index_prices,
                                           US_BREADTH_INDICES, INDEX_DATA_DIR,
@@ -592,22 +600,36 @@ def main():
         patterns_by_sym, market="US",
         fetch_financials=FETCH_FINANCIALS,
         ohlcv_dict=ohlcv_dict if ENABLE_SIGNALS else {},
+        primary_rs=PRIMARY_RS_PERIOD,
     )
     print("🏆 Top Picks – Buy …");    top_buy_df  = build_top_picks_buy(
-                                          stock_df, sec_str_df, market="US")
+                                          stock_df, sec_str_df, market="US",
+                                          primary_rs=PRIMARY_RS_PERIOD)
     print("🔴 Top Picks – Sell …");   top_sell_df = build_top_picks_sell(
-                                          stock_df, sec_str_df, market="US")
+                                          stock_df, sec_str_df, market="US",
+                                          primary_rs=PRIMARY_RS_PERIOD)
     print("📐 Chart Patterns …");     chart_df    = build_chart_patterns_df(
-                                          patterns_list, stock_df, market="US")
+                                          patterns_list, stock_df, market="US",
+                                          primary_rs=PRIMARY_RS_PERIOD)
     print("🎯 Trade Setups …");       trade_df    = build_trade_setups(
-                                          stock_df, sec_str_df, market="US")
+                                          stock_df, sec_str_df, market="US",
+                                          primary_rs=PRIMARY_RS_PERIOD)
     print("📋 RS Sleeve Lists …");    sleeve_df   = build_rs_sleeve_list(
                                           stock_df, universe, INDEX_DATA_DIR,
                                           market="US", run_time=run_time,
                                           index_prices=index_prices,
                                           price_data=price_data,
-                                          ohlcv_dict=ohlcv_dict)
-    dashboard_df = build_dashboard_df(stock_df, sec_str_df, "US", run_time)
+                                          ohlcv_dict=ohlcv_dict,
+                                          primary_rs=PRIMARY_RS_PERIOD)
+    dashboard_df = build_dashboard_df(stock_df, sec_str_df, "US", run_time,
+                                      primary_rs=PRIMARY_RS_PERIOD)
+
+    print("\n🌍 Country ETF Strength …")
+    country_etf_df = build_country_etf_df(index_prices, period_days=PERIOD_DAYS,
+                                           primary_rs=PRIMARY_RS_PERIOD)
+    print("\n🏅 Commodity Strength …")
+    commodity_df   = build_commodity_df(period_days=PERIOD_DAYS,
+                                         primary_rs=PRIMARY_RS_PERIOD)
 
     # ── Write to Google Sheets ────────────────────────────────────────────────
     # Inter-tab sleep (TAB_DELAY) prevents 429 quota exhaustion across 13 tabs.
@@ -625,6 +647,8 @@ def main():
     write_tab(ss, "🔴 Top Picks - Sell",   top_sell_df, "red");   time.sleep(TAB_DELAY)
     write_tab(ss, "📐 Chart Patterns",     chart_df,    "navy"); time.sleep(TAB_DELAY)
     write_tab(ss, "🎯 Trade Setups",       trade_df,    "navy"); time.sleep(TAB_DELAY)
+    write_tab(ss, "🌍 Country ETF Strength", country_etf_df, "navy"); time.sleep(TAB_DELAY)
+    write_tab(ss, "🏅 Commodity Strength",   commodity_df,   "navy"); time.sleep(TAB_DELAY)
     write_sleeve_tab(ss, sleeve_df, "US")
 
     # ── Console summary ───────────────────────────────────────────────────────
