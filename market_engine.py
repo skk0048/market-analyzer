@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  UNIFIED MARKET ANALYSIS ENGINE  v5.5                                      ║
+║  UNIFIED MARKET ANALYSIS ENGINE  v5.2                                      ║
 ║  Shared core — India & US markets                                          ║
 ║                                                                            ║
 ║  v5.2 additions:                                                           ║
@@ -2535,7 +2535,7 @@ def build_country_etf_df(benchmark_prices, period_days=420, primary_rs=55, end_d
     # Sort by primary RS period
     sort_col = {22: "RS_22d%", 55: "RS_55d%", 120: "RS_120d%", 252: "RS_252d%"}.get(primary_rs, "RS_55d%")
     df = df.sort_values(sort_col, ascending=False, na_position="last").reset_index(drop=True)
-    df.insert(0, "Rank", df.index + 1)
+    df.insert(0, "Rank", df.index + 1).astype(str)
 
     buy  = (df["Signal"] == "Buy").sum()
     sell = (df["Signal"] == "Sell").sum()
@@ -2709,7 +2709,7 @@ def build_commodity_df(period_days=420, primary_rs=55, end_date=None):
     other_rows = df[df["Signal"] != "Benchmark"].sort_values(
         sort_col, ascending=False, na_position="last")
     df = pd.concat([bench_rows, other_rows]).reset_index(drop=True)
-    df.insert(0, "Rank", df.index + 1)
+    df.insert(0, "Rank", (df.index + 1).astype(str))
     # Mark GLD row rank as "—"
     df.loc[df["Signal"] == "Benchmark", "Rank"] = "★"
 
