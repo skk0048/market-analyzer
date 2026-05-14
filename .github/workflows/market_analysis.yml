@@ -29,7 +29,7 @@ name: Market Analysis
 on:
   schedule:
     - cron: "30 3 * * 1-5"    # India  Run 1 → 04:30 UTC = 10:00 AM IST
-    - cron: "30  6* * 1-5"     # India  Run 2 → 09:00 UTC = 02:30 PM IST
+    - cron: "30  6 * * 1-5"     # India  Run 2 → 09:00 UTC = 02:30 PM IST
     - cron: "30 23 * * 1-5"   # USA    Run 1 → 21:30 UTC = 03:00 AM IST next day
     - cron: "0 3 * * 1-5"     # Scans  Run 1 → 05:00 UTC = 10:30 AM IST  ← FIXED (was "29 5")
     - cron: "0 9 * * 1-5"    # Scans  Run 2 → 12:00 UTC = 05:30 PM IST  ← FIXED (was "1 9")
