@@ -124,7 +124,7 @@ jobs:
       - name: Run USA analysis
         env:
           GOOGLE_CREDENTIALS_PATH: /tmp/google_credentials.json
-          GOOGLE_SHEET_URL_US: ${{ secrets.GOOGLE_SHEET_URL_US }}
+          GOOGLE_SHEET_URL_US: ${{ secrets.GOOGLE_SHEET_URL_USA }}
         run: python market_usa_gsht.py
 
       - name: Commit HTML output to repo
