@@ -10,9 +10,9 @@ from datetime import datetime, timedelta
 warnings.filterwarnings("ignore")
 
 SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
-INDEX_DATA_DIR = os.path.join(SCRIPT_DIR, "IndexData")
-OUTPUT_FILE    = os.path.join(SCRIPT_DIR, "India_Market_Analysis_v5.xlsx")
-STOCK_CSV      = os.path.join(INDEX_DATA_DIR, "ind_nifty500list.csv")
+INDEX_DATA_DIR = r"C:\Users\sudhi\Documents\Trading\SectorRotation\IndexData"
+OUTPUT_FILE    = os.path.join(SCRIPT_DIR, "India_Market_Analysis_v10.xlsx")
+STOCK_CSV      = os.path.join(INDEX_DATA_DIR, "ind_niftytotalmarket_list.csv")
 MAX_STOCKS          = 500
 PERIOD_DAYS         = 420   # ↑ from 300 → 420 calendar days (covers RS_252d & 12M%)
 ENABLE_PATTERNS     = False
@@ -32,7 +32,7 @@ SIGNAL_MAX_STOCKS   = 400
 # ── Historical analysis mode ─────────────────────────────────────────────────
 # Set END_DATE to a past date to analyse historical data (e.g. "2024-06-30").
 # Leave as None to use today's date (live / current mode).
-END_DATE = ""   # e.g. "2024-06-30"
+END_DATE = None  # e.g. "2024-06-30"  — None = live / today
 
 sys.path.insert(0, SCRIPT_DIR)
 from market_signals import build_dashboard_df
@@ -40,13 +40,15 @@ from market_engine import (
     INDIA_INDEX, INDIA_SECTORS, INDIA_INDUSTRY_TO_SECTOR, INDIA_BREADTH_INDICES,
     RS_PERIODS, SIGNAL_PERIODS, fetch_close_batch, fetch_ohlcv_batch,
     fetch_ohlcv_with_cache, _normalize, calc_rs, calc_rsi, load_csv_constituents,
+    safe_download,
     build_market_snapshot, build_sector_strength, build_sector_rotation,
     build_industry_rotation, build_market_breadth, build_sector_performance,
     build_stock_strength, build_top_picks_buy, build_top_picks_sell,
     build_chart_patterns_df, build_trade_setups, run_pattern_detection,
-    build_rs_sleeve_list,
+    build_rs_sleeve_list, build_country_etf_df, build_commodity_df,
 )
 from market_excel import build_workbook
+from market_html  import build_html_report
 
 
 def load_india_universe():
@@ -71,7 +73,7 @@ def fetch_india_sector_prices(universe):
         ysym = cfg.get("yahoo")
         if ysym:
             try:
-                raw = yf.download(ysym, period=f"{PERIOD_DAYS}d", auto_adjust=True, progress=False)
+                raw = safe_download(ysym, days=PERIOD_DAYS, end_date=END_DATE, auto_adjust=True, progress=False)
                 if not raw.empty and len(raw) >= 22:
                     cl = raw["Close"]
                     if isinstance(cl, pd.DataFrame): cl = cl.squeeze()
@@ -83,7 +85,7 @@ def fetch_india_sector_prices(universe):
             syms = load_csv_constituents(path, is_nse=True) if os.path.exists(path) else []
             if syms:
                 try:
-                    raw = yf.download(syms[:30], period=f"{PERIOD_DAYS}d", auto_adjust=True, progress=False)
+                    raw = safe_download(syms[:30], days=PERIOD_DAYS, end_date=END_DATE, auto_adjust=True, progress=False)
                     cls = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]]
                     cls = cls.dropna(how="all")
                     if len(cls) >= 22:
@@ -138,10 +140,7 @@ def main():
     else:
         print(f"\n📡 Fetching index ({INDIA_INDEX}) …")
         _end_str = END_DATE  # None = today
-        raw = yf.download(INDIA_INDEX, period=f"{PERIOD_DAYS}d" if not END_DATE else None,
-                          start=(datetime.strptime(END_DATE, "%Y-%m-%d")-timedelta(days=PERIOD_DAYS)).strftime("%Y-%m-%d") if END_DATE else None,
-                          end=END_DATE,
-                          auto_adjust=True, progress=False)
+        raw = safe_download(INDIA_INDEX, days=PERIOD_DAYS, end_date=END_DATE, auto_adjust=True, progress=False)
         if raw.empty: print("  ❌ Cannot fetch index"); return
         cl = raw["Close"]
         if isinstance(cl, pd.DataFrame): cl = cl.squeeze()
@@ -176,7 +175,7 @@ def main():
     print("\n📸 Market Snapshot …");       snap_df     = build_market_snapshot("INDIA")
     print("\n🏭 Sector Strength …");       sec_str_df  = build_sector_strength(universe, price_data, index_prices, sector_prices, primary_rs=PRIMARY_RS_PERIOD)
     print("\n🔄 Sector Rotation …");       sec_rot_df  = build_sector_rotation(universe, price_data, index_prices, primary_rs=PRIMARY_RS_PERIOD)
-    print("\n🏭 Industry Rotation …");     ind_rot_df  = build_industry_rotation(universe, price_data, index_prices, primary_rs=PRIMARY_RS_PERIOD)
+    print("\n🏭 Industry Rotation …");     ind_rot_df  = build_industry_rotation(universe, price_data, index_prices)
     print("\n📊 Market Breadth …")
     breadth_df = build_market_breadth(price_data, index_prices, INDIA_BREADTH_INDICES, INDEX_DATA_DIR, market="INDIA")
     print("\n📈 Sector Performance …");    sec_perf_df = build_sector_performance(sector_prices, index_prices)
@@ -203,6 +202,13 @@ def main():
         primary_rs=PRIMARY_RS_PERIOD,
     )
 
+    print("\n🌍 Country ETF Strength …")
+    country_etf_df = build_country_etf_df(index_prices, period_days=PERIOD_DAYS,
+                                           primary_rs=PRIMARY_RS_PERIOD, end_date=END_DATE)
+    print("\n🏅 Commodity Strength …")
+    commodity_df   = build_commodity_df(period_days=PERIOD_DAYS,
+                                         primary_rs=PRIMARY_RS_PERIOD, end_date=END_DATE)
+
     # ── Dashboard ──────────────────────────────────────────────────────────────
     run_time    = datetime.now().strftime("%d %b %Y  %H:%M IST")
     dashboard_df= build_dashboard_df(stock_df, sec_str_df, "INDIA", run_time, primary_rs=PRIMARY_RS_PERIOD)
@@ -213,13 +219,30 @@ def main():
         base, ext = os.path.splitext(OUTPUT_FILE)
         out_path = f"{base}_{END_DATE}{ext}"
     print("\n📊 Building Excel workbook …")
+    print("\n📊 Building Excel …")
     build_workbook(
         market="INDIA", snapshot_df=snap_df, sector_str_df=sec_str_df,
         sector_rot_df=sec_rot_df, industry_rot_df=ind_rot_df,
         breadth_df=breadth_df, sector_perf_df=sec_perf_df, stock_str_df=stock_df,
         top_buy_df=top_buy_df, top_sell_df=top_sell_df,
         chart_pat_df=chart_df, trade_df=trade_df, output_path=out_path,
-        dashboard_df=dashboard_df, sleeve_df=sleeve_df,primary_rs=PRIMARY_RS_PERIOD,
+        dashboard_df=dashboard_df, sleeve_df=sleeve_df, primary_rs=PRIMARY_RS_PERIOD,
+        country_etf_df=country_etf_df, commodity_df=commodity_df,
+    )
+
+    # ── HTML report ────────────────────────────────────────────────────────────
+    print("\n🌐 Building HTML report …")
+    html_path = out_path.replace(".xlsx", ".html")
+    build_html_report(
+        market="INDIA",
+        snapshot_df=snap_df, sector_str_df=sec_str_df,
+        sector_rot_df=sec_rot_df, industry_rot_df=ind_rot_df,
+        breadth_df=breadth_df, sector_perf_df=sec_perf_df, stock_str_df=stock_df,
+        top_buy_df=top_buy_df, top_sell_df=top_sell_df,
+        chart_pat_df=chart_df, trade_df=trade_df,
+        dashboard_df=dashboard_df, sleeve_df=sleeve_df,
+        country_etf_df=country_etf_df, commodity_df=commodity_df,
+        output_path=html_path, run_time=run_time, primary_rs=PRIMARY_RS_PERIOD,
     )
 
     # ── Console summary ────────────────────────────────────────────────────────
@@ -255,3 +278,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
