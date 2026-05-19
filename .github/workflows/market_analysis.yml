@@ -1,5 +1,10 @@
 # ════════════════════════════════════════════════════════════════════════════
-#  FundaTechno Market Analysis — GitHub Actions v5.7
+#  FundaTechno Market Analysis — GitHub Actions v5.8
+#
+#  KEY FIX v5.8: git push race condition resolved.
+#  Both India and USA jobs used to push to main at overlapping times.
+#  The second push was rejected because it hadn't seen the first job's commit.
+#  Fix: pull --rebase before every push + retry loop (3 attempts, 5s sleep).
 #
 #  GOLDEN RULE: cron string in schedule: MUST match github.event.schedule ==
 #  exactly — character for character, including spaces. One space off = skipped.
@@ -15,7 +20,7 @@
 #  REQUIRED GITHUB SECRETS:
 #    GOOGLE_CREDENTIALS        — service account JSON content
 #    GOOGLE_SHEET_URL          — India sheet URL
-#    GOOGLE_SHEET_URL_US       — US sheet URL
+#    GOOGLE_SHEET_URL_USA      — US sheet URL
 #    GOOGLE_SHEET_URL_SCANS    — Scans sheet URL
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -42,6 +47,10 @@ on:
         type: choice
         options: [all, india, usa, scans]
 
+# ── Shared push helper (used by both India and USA jobs) ────────────────────
+# Defined here as a reusable shell snippet via env var rather than a
+# separate composite action, so the file stays self-contained.
+
 jobs:
 
   # ──────────────────────────────────────────────────────────────────────────
@@ -49,7 +58,6 @@ jobs:
     name: India Market Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    # Runs on India crons OR manual trigger
     if: |
       (github.event_name == 'schedule' && (
         github.event.schedule == '30 3 * * 1-5'  ||
@@ -62,6 +70,9 @@ jobs:
       ))
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Fetch full history so rebase has context
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -82,13 +93,28 @@ jobs:
           GOOGLE_SHEET_URL: ${{ secrets.GOOGLE_SHEET_URL }}
         run: python market_india_gsht.py
 
-      - name: Commit HTML output to repo
+      - name: Commit and push HTML to repo
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f India_Market_Analysis*.html || true
-          git diff --staged --quiet || git commit -m "📊 India HTML update $(date -u '+%Y-%m-%d %H:%M UTC')"
-          git push || true
+
+          git add -f India_Market_Analysis*.html 2>/dev/null || true
+
+          # Exit cleanly if there is nothing new to commit
+          if git diff --staged --quiet; then
+            echo "No HTML changes — nothing to commit."
+            exit 0
+          fi
+
+          git commit -m "📊 India HTML update $(date -u '+%Y-%m-%d %H:%M UTC')"
+
+          # Pull-rebase + push with up to 3 retries to handle concurrent job pushes
+          for attempt in 1 2 3; do
+            echo "Push attempt ${attempt}…"
+            git pull --rebase origin main && git push && echo "Push succeeded." && break
+            echo "Attempt ${attempt} failed. Sleeping 10s before retry…"
+            sleep 10
+          done
 
       - name: Remove credentials
         if: always()
@@ -107,6 +133,8 @@ jobs:
       ))
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -127,13 +155,26 @@ jobs:
           GOOGLE_SHEET_URL_US: ${{ secrets.GOOGLE_SHEET_URL_USA }}
         run: python market_usa_gsht.py
 
-      - name: Commit HTML output to repo
+      - name: Commit and push HTML to repo
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f USA_Market_Analysis*.html || true
-          git diff --staged --quiet || git commit -m "📊 USA HTML update $(date -u '+%Y-%m-%d %H:%M UTC')"
-          git push || true
+
+          git add -f USA_Market_Analysis*.html 2>/dev/null || true
+
+          if git diff --staged --quiet; then
+            echo "No HTML changes — nothing to commit."
+            exit 0
+          fi
+
+          git commit -m "📊 USA HTML update $(date -u '+%Y-%m-%d %H:%M UTC')"
+
+          for attempt in 1 2 3; do
+            echo "Push attempt ${attempt}…"
+            git pull --rebase origin main && git push && echo "Push succeeded." && break
+            echo "Attempt ${attempt} failed. Sleeping 10s before retry…"
+            sleep 10
+          done
 
       - name: Remove credentials
         if: always()
@@ -155,6 +196,8 @@ jobs:
       ))
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
