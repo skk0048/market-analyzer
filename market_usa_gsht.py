@@ -42,9 +42,15 @@ from google.oauth2.service_account import Credentials
 import tenacity
 warnings.filterwarnings("ignore")
 
-SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
-INDEX_DATA_DIR = os.path.join(SCRIPT_DIR, "IndexData")
-STOCK_CSV      = os.path.join(INDEX_DATA_DIR, "us_sp500list.csv")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ── Dynamic Path for GitHub vs Local ──
+if os.path.exists(os.path.join(SCRIPT_DIR, "IndexData")):
+    INDEX_DATA_DIR = os.path.join(SCRIPT_DIR, "IndexData") # GitHub Actions
+else:
+    INDEX_DATA_DIR = r"C:\Users\sudhi\Documents\Trading\SectorRotation\IndexData" # Local
+
+STOCK_CSV = os.path.join(INDEX_DATA_DIR, "us_sp500list.csv")
 
 # ── Tunable constants ─────────────────────────────────────────────────────────
 MAX_STOCKS        = 500
@@ -650,6 +656,21 @@ def main():
     write_tab(ss, "🏅 Commodity Strength",   commodity_df,   "navy"); time.sleep(TAB_DELAY)
     write_sleeve_tab(ss, sleeve_df, "US")
 
+    # ── HTML report ────────────────────────────────────────────────────────────
+    print("\n🌐 Building HTML report …")
+    html_path = os.path.join(SCRIPT_DIR, "USA_Market_Analysis.html")
+    build_html_report(
+        market="US",
+        snapshot_df=snap_df, sector_str_df=sec_str_df,
+        sector_rot_df=sec_rot_df, industry_rot_df=ind_rot_df,
+        breadth_df=breadth_df, sector_perf_df=sec_perf_df, stock_str_df=stock_df,
+        top_buy_df=top_buy_df, top_sell_df=top_sell_df,
+        chart_pat_df=chart_df, trade_df=trade_df,
+        dashboard_df=dashboard_df, sleeve_df=sleeve_df,
+        country_etf_df=country_etf_df, commodity_df=commodity_df,
+        output_path=html_path, run_time=run_time, primary_rs=PRIMARY_RS_PERIOD,
+    )
+    
     # ── Console summary ───────────────────────────────────────────────────────
     elapsed = time.time() - t0
     print(f"\n{'═'*68}")
