@@ -656,21 +656,26 @@ def main():
     write_tab(ss, "🏅 Commodity Strength",   commodity_df,   "navy"); time.sleep(TAB_DELAY)
     write_sleeve_tab(ss, sleeve_df, "US")
 
-    # ── HTML report ────────────────────────────────────────────────────────────
-    print("\n🌐 Building HTML report …")
-    html_path = os.path.join(SCRIPT_DIR, "USA_Market_Analysis.html")
-    build_html_report(
-        market="US",
-        snapshot_df=snap_df, sector_str_df=sec_str_df,
-        sector_rot_df=sec_rot_df, industry_rot_df=ind_rot_df,
-        breadth_df=breadth_df, sector_perf_df=sec_perf_df, stock_str_df=stock_df,
-        top_buy_df=top_buy_df, top_sell_df=top_sell_df,
-        chart_pat_df=chart_df, trade_df=trade_df,
-        dashboard_df=dashboard_df, sleeve_df=sleeve_df,
-        country_etf_df=country_etf_df, commodity_df=commodity_df,
-        output_path=html_path, run_time=run_time, primary_rs=PRIMARY_RS_PERIOD,
-    )
-    
+    # ── 🌐 HTML REPORT GENERATION FOR GITHUB PAGES ────────────────────────────
+    print("\n🌐 Building US HTML report …")
+    try:
+        from market_html import build_html_report
+        html_path = os.path.join(SCRIPT_DIR, "USA_Market_Analysis.html")
+        build_html_report(
+            market="US",
+            snapshot_df=snap_df, sector_str_df=sec_str_df,
+            sector_rot_df=sec_rot_df, industry_rot_df=ind_rot_df,
+            breadth_df=breadth_df, sector_perf_df=sec_perf_df, stock_str_df=stock_df,
+            top_buy_df=top_buy_df, top_sell_df=top_sell_df,
+            chart_pat_df=chart_df, trade_df=trade_df,
+            dashboard_df=dashboard_df, sleeve_df=sleeve_df,
+            country_etf_df=country_etf_df, commodity_df=commodity_df,
+            output_path=html_path, run_time=run_time, primary_rs=PRIMARY_RS_PERIOD,
+        )
+        print(f"  ✅ HTML generated successfully at: {html_path}")
+    except Exception as e:
+        print(f"  ⚠ HTML report generation skipped/failed: {e}")
+
     # ── Console summary ───────────────────────────────────────────────────────
     elapsed = time.time() - t0
     print(f"\n{'═'*68}")
