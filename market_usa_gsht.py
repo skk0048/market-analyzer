@@ -72,8 +72,8 @@ CREDENTIALS_PATH = (
 )
 SHEET_URL = (
     # Separate env var so India and US can write to different spreadsheets
-    os.environ.get("GOOGLE_SHEET_URL_US")
-    or os.environ.get("GOOGLE_SHEET_URL")          # fallback: same sheet
+    os.environ.get("GOOGLE_SHEET_URL_USA")
+    or os.environ.get("GOOGLE_SHEET_URL_US")          # fallback: same sheet
     or "https://docs.google.com/spreadsheets/d/YOUR_US_SHEET_ID/edit"
 )
 GSCOPE = [
